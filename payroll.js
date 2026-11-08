@@ -59,8 +59,9 @@ function calcLine(emp, { attendance = [], adjustments = [], loans = [] }, period
 
   return {
     empId: emp.empId, name: `${emp.surname} ${emp.firstName}`, department: emp.department, position: emp.position,
-    bank: emp.bank, accountNo: emp.accountNo,
+    bank: emp.bank, accountNo: emp.accountNo, state: emp.state, tin: emp.tin, pensionPin: emp.pensionPin,
     basic, allowances, otHours: r2(otHours), otPay: r2(otPay), bonuses: r2(bonuses), gross,
+    pensionable: r2(pensionable),
     pension, nhf, rentRelief: tax.rentRelief, chargeable: tax.chargeable, paye: tax.monthlyTax,
     loanDeduction, otherDeductions, netPay, employerPension: r2(CFG.EMPLOYER_PENSION * pensionable),
     loanBreakdown, flags,

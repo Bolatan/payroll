@@ -21,7 +21,7 @@ const makeAuth = (roles, allowPasswordChange) => wrap(async (req, res, next) => 
     return res.status(403).json({ error: 'Change your password to continue.', code: 'PASSWORD_CHANGE_REQUIRED' });
   if (roles.length && u.role !== 'admin' && !roles.includes(u.role))
     return res.status(403).json({ error: `Your role (${u.role}) cannot do this.` });
-  req.user = { id: String(u._id), name: u.username, displayName: u.name, role: u.role, mustChangePassword: u.mustChangePassword };
+  req.user = { id: String(u._id), name: u.username, displayName: u.name, role: u.role, empId: u.empId || '', mustChangePassword: u.mustChangePassword };
   next();
 });
 const auth = (...roles) => makeAuth(roles, false);
@@ -33,6 +33,7 @@ const periodRange = (p) => {
   return [new Date(Date.UTC(y, m - 1, 1)), new Date(Date.UTC(y, m, 1))];
 };
 const validPeriod = (p) => /^\d{4}-(0[1-9]|1[0-2])$/.test(p);
+const qCsv = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
 
 // Health checks run before the database connection so they work even when MongoDB is misconfigured.
 app.get('/api/health', (req, res) => res.json({
@@ -80,11 +81,11 @@ app.post('/api/auth/login', wrap(async (req, res) => {
   u.failedLogins = 0; u.lockUntil = undefined; u.lastLogin = new Date();
   await u.save();
   await audit(u.username, 'login', 'User', u.username, {});
-  res.json({ token: sign(u), user: { id: String(u._id), username: u.username, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword } });
+  res.json({ token: sign(u), user: { id: String(u._id), username: u.username, name: u.name, role: u.role, empId: u.empId || '', mustChangePassword: u.mustChangePassword } });
 }));
 
 app.get('/api/me', makeAuth([], true), (req, res) =>
-  res.json({ id: req.user.id, username: req.user.name, name: req.user.displayName, role: req.user.role, mustChangePassword: req.user.mustChangePassword }));
+  res.json({ id: req.user.id, username: req.user.name, name: req.user.displayName, role: req.user.role, empId: req.user.empId, mustChangePassword: req.user.mustChangePassword }));
 
 app.post('/api/auth/change-password', makeAuth([], true), wrap(async (req, res) => {
   const { current, next } = req.body;
@@ -102,20 +103,20 @@ app.post('/api/auth/change-password', makeAuth([], true), wrap(async (req, res) 
 // ---- User management (admin) ----
 app.get('/api/users', auth('admin'), wrap(async (req, res) => res.json(await User.find().sort('username').lean())));
 app.post('/api/users', auth('admin'), wrap(async (req, res) => {
-  const { username, name, role, password } = req.body;
+  const { username, name, role, password, empId } = req.body;
   const problem = checkPassword(password);
   if (problem) return res.status(400).json({ error: problem });
-  const u = await User.create({ username, name, role, passwordHash: await hash(password), mustChangePassword: true });
-  await log(req, 'create', 'User', u.username, { role: u.role });
+  const u = await User.create({ username, name, role, empId: empId?.trim() || undefined, passwordHash: await hash(password), mustChangePassword: true });
+  await log(req, 'create', 'User', u.username, { role: u.role, empId: u.empId });
   res.status(201).json({ id: u._id, username: u.username });
 }));
 app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
   if (req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot change your own role or status.' });
   const change = {};
-  for (const k of ['name', 'role', 'active']) if (k in req.body) change[k] = req.body[k];
+  for (const k of ['name', 'role', 'active', 'empId']) if (k in req.body) change[k] = req.body[k];
   const u = await User.findById(req.params.id);
   if (!u) return res.status(404).json({ error: 'User not found.' });
-  const before = { name: u.name, role: u.role, active: u.active };
+  const before = { name: u.name, role: u.role, active: u.active, empId: u.empId };
   u.set(change);
   if (change.role !== undefined || change.active === false) u.tokenVersion += 1; // sign them out
   await u.save();
@@ -133,9 +134,8 @@ app.post('/api/users/:id/reset-password', auth('admin'), wrap(async (req, res) =
   res.json({ ok: true });
 }));
 
-
-// ---- Employees (HR) ----
-app.get('/api/employees', auth('hr', 'payroll', 'approver'), wrap(async (req, res) =>
+// ---- Employees (HR, with read access for payroll, approver, auditor, executive) ----
+app.get('/api/employees', auth('hr', 'payroll', 'approver', 'auditor', 'executive'), wrap(async (req, res) =>
   res.json(await Employee.find().sort('empId').lean())));
 app.post('/api/employees', auth('hr'), wrap(async (req, res) => {
   const e = await Employee.create(req.body);
@@ -152,13 +152,13 @@ app.put('/api/employees/:id', auth('hr'), wrap(async (req, res) => {
   res.json(old);
 }));
 
-// ---- Attendance (payroll enters, approver approves overtime) ----
-app.get('/api/attendance', auth('payroll', 'approver', 'hr'), wrap(async (req, res) => {
+// ---- Attendance (payroll & supervisors enter, approver & supervisors approve with segregation of duties) ----
+app.get('/api/attendance', auth('payroll', 'approver', 'hr', 'supervisor', 'auditor'), wrap(async (req, res) => {
   const q = req.query.period && validPeriod(req.query.period)
     ? { date: { $gte: periodRange(req.query.period)[0], $lt: periodRange(req.query.period)[1] } } : {};
   res.json(await Attendance.find(q).sort('-date').limit(500).lean());
 }));
-app.post('/api/attendance', auth('payroll'), wrap(async (req, res) => {
+app.post('/api/attendance', auth('payroll', 'supervisor'), wrap(async (req, res) => {
   const b = req.body;
   if (!(await Employee.exists({ empId: b.empId, status: { $in: ['Active', 'On Leave'] } })))
     return res.status(400).json({ error: 'Employee not found or not active.' });
@@ -170,15 +170,20 @@ app.post('/api/attendance', auth('payroll'), wrap(async (req, res) => {
   await log(req, 'create', 'Attendance', a._id, { empId: a.empId, date: a.date, hoursWorked });
   res.status(201).json(a);
 }));
-app.post('/api/attendance/:id/approve', auth('approver'), wrap(async (req, res) => {
-  const a = await Attendance.findByIdAndUpdate(req.params.id, { approved: true, approvedBy: req.user.name }, { new: true });
+app.post('/api/attendance/:id/approve', auth('approver', 'supervisor'), wrap(async (req, res) => {
+  const a = await Attendance.findById(req.params.id);
   if (!a) return res.status(404).json({ error: 'Entry not found.' });
+  if (a.createdBy && a.createdBy === req.user.name)
+    return res.status(403).json({ error: 'You cannot approve attendance you created.' });
+  a.approved = true;
+  a.approvedBy = req.user.name;
+  await a.save();
   await log(req, 'approve', 'Attendance', a._id, {});
   res.json(a);
 }));
 
 // ---- Loans ----
-app.get('/api/loans', auth('payroll', 'approver', 'hr'), wrap(async (req, res) =>
+app.get('/api/loans', auth('payroll', 'approver', 'hr', 'auditor'), wrap(async (req, res) =>
   res.json(await Loan.find().sort('-createdAt').lean())));
 app.post('/api/loans', auth('payroll', 'hr'), wrap(async (req, res) => {
   const { empId, amount, termMonths, startPeriod } = req.body;
@@ -201,7 +206,7 @@ app.post('/api/loans/:id/approve', auth('approver'), wrap(async (req, res) => {
 }));
 
 // ---- Adjustments: bonuses, earnings, other deductions ----
-app.get('/api/adjustments', auth('payroll', 'approver', 'hr'), wrap(async (req, res) =>
+app.get('/api/adjustments', auth('payroll', 'approver', 'hr', 'auditor'), wrap(async (req, res) =>
   res.json(await Adjustment.find().sort('-createdAt').limit(500).lean())));
 app.post('/api/adjustments', auth('payroll', 'hr'), wrap(async (req, res) => {
   if (!(await Employee.exists({ empId: req.body.empId }))) return res.status(400).json({ error: 'Employee not found.' });
@@ -255,13 +260,13 @@ app.post('/api/payroll/:period/calculate', auth('payroll'), wrap(async (req, res
   res.json(run);
 }));
 
-app.get('/api/payroll/:period', auth('payroll', 'approver', 'hr'), wrap(async (req, res) => {
+app.get('/api/payroll/:period', auth('payroll', 'approver', 'hr', 'auditor', 'executive', 'tax_advisor'), wrap(async (req, res) => {
   const run = await PayrollRun.findOne({ period: req.params.period }).lean();
   if (!run) return res.status(404).json({ error: 'No payroll has been calculated for this period.' });
   res.json(run);
 }));
 
-app.post('/api/payroll/:period/approve', auth('approver'), wrap(async (req, res) => {
+app.post('/api/payroll/:period/approve', auth('approver', 'executive'), wrap(async (req, res) => {
   const run = await PayrollRun.findOne({ period: req.params.period });
   if (!run) return res.status(404).json({ error: 'No payroll has been calculated for this period.' });
   if (run.status === 'Approved') return res.status(409).json({ error: 'Already approved.' });
@@ -284,26 +289,204 @@ app.post('/api/payroll/:period/approve', auth('approver'), wrap(async (req, res)
   res.json(claimed);
 }));
 
-app.get('/api/payroll/:period/payslip/:empId', auth('payroll', 'approver', 'hr'), wrap(async (req, res) => {
+// ---- Employee Self-Service Payslips ----
+const resolveSelfEmpId = (req) => (req.user.empId || req.user.name || '').toUpperCase();
+
+app.get('/api/me/payslips', auth('employee', 'payroll', 'approver', 'hr', 'supervisor', 'executive', 'auditor', 'tax_advisor'), wrap(async (req, res) => {
+  const myEmpId = resolveSelfEmpId(req);
+  const runs = await PayrollRun.find({ status: 'Approved' }).sort('-period').lean();
+  const slips = [];
+  for (const r of runs) {
+    const line = r.lines?.find((l) => (l.empId || '').toUpperCase() === myEmpId);
+    if (line) {
+      slips.push({ period: r.period, gross: line.gross, netPay: line.netPay, approvedAt: r.approvedAt, name: line.name });
+    }
+  }
+  res.json(slips);
+}));
+
+app.get('/api/me/payslips/:period', auth('employee', 'payroll', 'approver', 'hr', 'supervisor', 'executive', 'auditor', 'tax_advisor'), wrap(async (req, res) => {
+  const myEmpId = resolveSelfEmpId(req);
+  const run = await PayrollRun.findOne({ period: req.params.period, status: 'Approved' }).lean();
+  if (!run) return res.status(404).json({ error: 'Approved payslip not found for this period.' });
+  const line = run.lines?.find((l) => (l.empId || '').toUpperCase() === myEmpId);
+  if (!line) return res.status(404).json({ error: 'Payslip not found for employee.' });
+  res.json({ period: run.period, status: run.status, approvedAt: run.approvedAt, ...line });
+}));
+
+app.get('/api/payroll/:period/payslip/:empId', auth('payroll', 'approver', 'hr', 'auditor', 'executive', 'employee'), wrap(async (req, res) => {
+  const targetId = req.params.empId.toUpperCase();
+  if (req.user.role === 'employee') {
+    const myEmpId = resolveSelfEmpId(req);
+    if (myEmpId !== targetId) return res.status(403).json({ error: 'You can only view your own payslip.' });
+  }
   const run = await PayrollRun.findOne({ period: req.params.period }).lean();
-  const line = run?.lines.find((l) => l.empId === req.params.empId);
+  const line = run?.lines.find((l) => (l.empId || '').toUpperCase() === targetId);
   if (!line) return res.status(404).json({ error: 'Payslip not found.' });
   res.json({ period: run.period, status: run.status, ...line });
 }));
 
-app.get('/api/payroll/:period/bank.csv', auth('payroll', 'approver'), wrap(async (req, res) => {
+// ---- Bank Transfer Schedule ----
+app.get('/api/payroll/:period/bank.csv', auth('payroll', 'approver', 'executive'), wrap(async (req, res) => {
   const run = await PayrollRun.findOne({ period: req.params.period }).lean();
   if (!run || run.status !== 'Approved') return res.status(409).json({ error: 'The bank file is available only after approval.' });
   const pay = run.lines.filter((l) => l.netPay > 0);
-  const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
   const rows = ['EmpID,EmployeeName,Bank,AccountNo,NetPay,Narration',
-    ...pay.map((l) => [l.empId, q(l.name), q(l.bank), l.accountNo, l.netPay.toFixed(2), q(`Salary ${run.period}`)].join(',')),
+    ...pay.map((l) => [l.empId, qCsv(l.name), qCsv(l.bank), l.accountNo, l.netPay.toFixed(2), qCsv(`Salary ${run.period}`)].join(',')),
     `TOTAL,${pay.length} payments,,,${r2(pay.reduce((s, l) => s + l.netPay, 0)).toFixed(2)},`];
   await log(req, 'export', 'BankFile', run.period, { count: pay.length });
   res.type('text/csv').attachment(`bank-${run.period}.csv`).send(rows.join('\n'));
 }));
 
-app.get('/api/audit', auth('approver'), wrap(async (req, res) =>
+// ---- Statutory Remittances (Tax Advisor / Statutory Bodies / Approver / Executive) ----
+app.get('/api/payroll/:period/remittances/summary', auth('tax_advisor', 'approver', 'payroll', 'executive', 'auditor'), wrap(async (req, res) => {
+  const run = await PayrollRun.findOne({ period: req.params.period }).lean();
+  if (!run) return res.status(404).json({ error: 'Payroll not found for this period.' });
+
+  const statesMap = {};
+  for (const l of run.lines) {
+    const st = l.state || 'Lagos (Default)';
+    if (!statesMap[st]) statesMap[st] = { state: st, count: 0, gross: 0, chargeable: 0, paye: 0 };
+    statesMap[st].count += 1;
+    statesMap[st].gross = r2(statesMap[st].gross + (l.gross || 0));
+    statesMap[st].chargeable = r2(statesMap[st].chargeable + (l.chargeable || 0));
+    statesMap[st].paye = r2(statesMap[st].paye + (l.paye || 0));
+  }
+
+  const grossTotal = run.totals.gross || 0;
+  const nsitf = r2(grossTotal * 0.01); // 1% Employees Compensation Scheme
+  const itf = r2(grossTotal * 0.01);   // 1% Industrial Training Fund
+  const totalPension = r2((run.totals.pension || 0) + (run.totals.employerPension || 0));
+
+  res.json({
+    period: run.period,
+    status: run.status,
+    paye: {
+      total: run.totals.paye,
+      byState: Object.values(statesMap),
+    },
+    pension: {
+      employee: run.totals.pension,
+      employer: run.totals.employerPension,
+      total: totalPension,
+      enrolledCount: run.lines.filter((l) => l.pension > 0).length,
+    },
+    nhf: {
+      total: run.totals.nhf,
+      enrolledCount: run.lines.filter((l) => l.nhf > 0).length,
+    },
+    levies: {
+      nsitf,
+      itf,
+    },
+    totalRemittanceLiability: r2((run.totals.paye || 0) + totalPension + (run.totals.nhf || 0) + nsitf + itf),
+  });
+}));
+
+app.get('/api/payroll/:period/remittance/paye.csv', auth('tax_advisor', 'approver', 'payroll', 'executive'), wrap(async (req, res) => {
+  const run = await PayrollRun.findOne({ period: req.params.period }).lean();
+  if (!run) return res.status(404).json({ error: 'Payroll not found for this period.' });
+  const rows = ['EmpID,EmployeeName,TIN,State,GrossPay,ChargeableIncome,PAYE',
+    ...run.lines.map((l) => [l.empId, qCsv(l.name), qCsv(l.tin || ''), qCsv(l.state || 'Lagos'), l.gross.toFixed(2), (l.chargeable || 0).toFixed(2), l.paye.toFixed(2)].join(',')),
+    `TOTAL,${run.lines.length} employees,,,,${r2(run.totals.gross).toFixed(2)},${r2(run.totals.paye).toFixed(2)}`];
+  await log(req, 'export', 'RemittancePAYE', run.period, { count: run.lines.length });
+  res.type('text/csv').attachment(`paye-remittance-${run.period}.csv`).send(rows.join('\n'));
+}));
+
+app.get('/api/payroll/:period/remittance/pension.csv', auth('tax_advisor', 'approver', 'payroll', 'executive'), wrap(async (req, res) => {
+  const run = await PayrollRun.findOne({ period: req.params.period }).lean();
+  if (!run) return res.status(404).json({ error: 'Payroll not found for this period.' });
+  const totalPen = (l) => r2(l.pension + l.employerPension).toFixed(2);
+  const rows = ['EmpID,EmployeeName,PensionPIN,PensionableEmoluments,EmployeePension,EmployerPension,TotalPension',
+    ...run.lines.map((l) => [l.empId, qCsv(l.name), qCsv(l.pensionPin || ''), (l.pensionable || 0).toFixed(2), l.pension.toFixed(2), l.employerPension.toFixed(2), totalPen(l)].join(',')),
+    `TOTAL,${run.lines.length} employees,,${r2(run.lines.reduce((s, l) => s + (l.pensionable || 0), 0)).toFixed(2)},${r2(run.totals.pension).toFixed(2)},${r2(run.totals.employerPension).toFixed(2)},${r2((run.totals.pension || 0) + (run.totals.employerPension || 0)).toFixed(2)}`];
+  await log(req, 'export', 'RemittancePension', run.period, { count: run.lines.length });
+  res.type('text/csv').attachment(`pension-remittance-${run.period}.csv`).send(rows.join('\n'));
+}));
+
+app.get('/api/payroll/:period/remittance/nhf.csv', auth('tax_advisor', 'approver', 'payroll', 'executive'), wrap(async (req, res) => {
+  const run = await PayrollRun.findOne({ period: req.params.period }).lean();
+  if (!run) return res.status(404).json({ error: 'Payroll not found for this period.' });
+  const nhfLines = run.lines.filter((l) => l.nhf > 0);
+  const rows = ['EmpID,EmployeeName,BasicSalary,NHFDeduction',
+    ...nhfLines.map((l) => [l.empId, qCsv(l.name), l.basic.toFixed(2), l.nhf.toFixed(2)].join(',')),
+    `TOTAL,${nhfLines.length} employees,${r2(nhfLines.reduce((s, l) => s + l.basic, 0)).toFixed(2)},${r2(run.totals.nhf).toFixed(2)}`];
+  await log(req, 'export', 'RemittanceNHF', run.period, { count: nhfLines.length });
+  res.type('text/csv').attachment(`nhf-remittance-${run.period}.csv`).send(rows.join('\n'));
+}));
+
+// ---- Executive Dashboard (MD / CFO / Approver / Auditor) ----
+app.get('/api/dashboard/:period', auth('executive', 'approver', 'auditor'), wrap(async (req, res) => {
+  const run = await PayrollRun.findOne({ period: req.params.period }).lean();
+  if (!run) {
+    return res.json({
+      period: req.params.period,
+      status: 'Not Run',
+      message: `No payroll calculated for ${req.params.period}.`,
+    });
+  }
+
+  const deptMap = {};
+  for (const l of run.lines) {
+    const dept = l.department || 'Unassigned';
+    if (!deptMap[dept]) deptMap[dept] = { department: dept, count: 0, gross: 0, otPay: 0, netPay: 0, employerCost: 0 };
+    deptMap[dept].count += 1;
+    deptMap[dept].gross = r2(deptMap[dept].gross + l.gross);
+    deptMap[dept].otPay = r2(deptMap[dept].otPay + l.otPay);
+    deptMap[dept].netPay = r2(deptMap[dept].netPay + l.netPay);
+    deptMap[dept].employerCost = r2(deptMap[dept].employerCost + l.gross + l.employerPension);
+  }
+
+  const highValueEmployees = run.lines
+    .filter((l) => l.netPay >= 1000000)
+    .map((l) => ({ empId: l.empId, name: l.name, department: l.department, gross: l.gross, netPay: l.netPay }));
+
+  const flaggedEmployees = run.lines
+    .filter((l) => l.flags && l.flags.length > 0)
+    .map((l) => ({ empId: l.empId, name: l.name, flags: l.flags, netPay: l.netPay }));
+
+  const totalOTHours = r2(run.lines.reduce((s, l) => s + (l.otHours || 0), 0));
+  const totalBonuses = r2(run.lines.reduce((s, l) => s + (l.bonuses || 0), 0));
+  const totalEmployerCost = r2((run.totals.gross || 0) + (run.totals.employerPension || 0));
+
+  res.json({
+    period: run.period,
+    status: run.status,
+    preparedBy: run.preparedBy,
+    approvedBy: run.approvedBy,
+    approvedAt: run.approvedAt,
+    kpis: {
+      headcount: run.totals.employees,
+      grossPayroll: run.totals.gross,
+      netPayroll: run.totals.net,
+      totalPAYE: run.totals.paye,
+      pensionEmployee: run.totals.pension,
+      pensionEmployer: run.totals.employerPension,
+      pensionTotal: r2((run.totals.pension || 0) + (run.totals.employerPension || 0)),
+      totalNHF: run.totals.nhf,
+      otHours: totalOTHours,
+      otCost: run.totals.otPay,
+      bonuses: totalBonuses,
+      loanRecoveries: run.totals.loans,
+      employerCost: totalEmployerCost,
+      statutoryLevies: {
+        nsitf: r2((run.totals.gross || 0) * 0.01),
+        itf: r2((run.totals.gross || 0) * 0.01),
+      },
+    },
+    departmentBreakdown: Object.values(deptMap),
+    governance: {
+      highValueCount: highValueEmployees.length,
+      highValueEmployees,
+      exceptionCount: flaggedEmployees.length,
+      flaggedEmployees,
+      warnings: run.warnings || [],
+    },
+  });
+}));
+
+// ---- Audit Log (approver & auditor) ----
+app.get('/api/audit', auth('approver', 'auditor'), wrap(async (req, res) =>
   res.json(await Audit.find().sort('-ts').limit(300).lean())));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

@@ -89,30 +89,47 @@ function say(text, kind = '') { $('#msg').innerHTML = text ? `<div class="msg ${
 // ---- screen definitions ----
 const shifts = ['Day', 'Night', 'Weekend', 'Holiday'];
 const SCREENS = {
-  Employees: { path: '/api/employees', roles: ['hr', 'payroll', 'approver'], write: ['hr'], key: 'empId',
+  Employees: { path: '/api/employees', roles: ['hr', 'payroll', 'approver', 'auditor', 'executive'], write: ['hr'], key: 'empId',
     fields: [['empId', 'Employee ID'], ['surname', 'Surname'], ['firstName', 'First name'], ['department', 'Department'], ['position', 'Position'],
       ['basic', 'Basic (monthly)', 'number'], ['housing', 'Housing', 'number'], ['transport', 'Transport', 'number'], ['otherAllowance', 'Other allowance', 'number'],
       ['annualRent', 'Annual rent paid', 'number'], ['bank', 'Bank'], ['accountNo', 'Account no. (10 digits)'], ['state', 'State of residence'], ['nhfEnrolled', 'Enrolled in NHF', 'check']],
     cols: ['empId', 'surname', 'firstName', 'department', 'basic', 'bank', 'accountNo', 'status'] },
-  Attendance: { path: '/api/attendance', roles: ['payroll', 'approver', 'hr'], write: ['payroll'], approve: ['approver'],
+  Attendance: { path: '/api/attendance', roles: ['payroll', 'approver', 'hr', 'supervisor', 'auditor'], write: ['payroll', 'supervisor'], approve: ['approver', 'supervisor'],
     fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number']],
     cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'approved'] },
-  Loans: { path: '/api/loans', roles: ['payroll', 'approver', 'hr'], write: ['payroll', 'hr'], approve: ['approver'],
+  Loans: { path: '/api/loans', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
     fields: [['empId', 'Employee ID'], ['amount', 'Loan amount', 'number'], ['termMonths', 'Term (months)', 'number'], ['startPeriod', 'First deduction (YYYY-MM)']],
     cols: ['empId', 'amount', 'termMonths', 'monthly', 'outstanding', 'startPeriod', 'status'], pending: (r) => r.status === 'Pending' },
-  Adjustments: { path: '/api/adjustments', roles: ['payroll', 'approver', 'hr'], write: ['payroll', 'hr'], approve: ['approver'],
+  Adjustments: { path: '/api/adjustments', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
     fields: [['period', 'Period (YYYY-MM)'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['amount', 'Amount', 'number'], ['reason', 'Reason']],
     cols: ['period', 'empId', 'type', 'amount', 'reason', 'approved'] },
-  Audit: { path: '/api/audit', roles: ['approver'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
+  Audit: { path: '/api/audit', roles: ['approver', 'auditor'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
 };
 const can = (list) => me.role === 'admin' || list.includes(me.role);
 
 function renderNav() {
-  const items = me.mustChangePassword ? ['Account'] : ['Payroll', ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)), ...(me.role === 'admin' ? ['Users'] : []), 'Account'];
-  $('#nav').innerHTML = `<strong>Factory Payroll</strong>` + items.map((t) => `<button data-t="${t}" ${t === tab ? 'aria-current="true"' : ''}>${t}</button>`).join('') +
+  const items = me.mustChangePassword ? ['Account'] : [
+    ...(can(['payroll', 'approver', 'hr', 'executive', 'auditor']) ? ['Payroll'] : []),
+    ...(me.role === 'employee' || me.empId ? ['My Payslips'] : []),
+    ...(can(['executive', 'approver']) ? ['Executive'] : []),
+    ...(can(['tax_advisor', 'approver', 'payroll', 'executive']) ? ['Remittances'] : []),
+    ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)),
+    ...(me.role === 'admin' ? ['Users'] : []),
+    'Account'
+  ];
+  const uniqueItems = [...new Set(items)];
+  $('#nav').innerHTML = `<strong>Factory Payroll</strong>` + uniqueItems.map((t) => `<button data-t="${t}" ${t === tab ? 'aria-current="true"' : ''}>${t}</button>`).join('') +
     `<div class="who">${esc(me.name)} (${me.role})<br><button id="out" style="margin-top:.4rem">Sign out</button></div>`;
   $('#nav').onclick = (e) => { if (e.target.dataset.t) { tab = e.target.dataset.t; say(''); show(); } };
   $('#out').onclick = () => { sessionStorage.clear(); location.reload(); };
+}
+
+function showPayslipModal(p) {
+  const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
+  $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${esc(p.period)}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}${p.status !== 'Approved' ? '<br><b class="flag">Draft, not approved</b>' : ''}</p>
+  <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours || 0} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
+  <p class="noprint" style="display:flex;gap:.5rem;margin-top:1rem"><button class="primary" onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
+  $('#slip').showModal();
 }
 
 async function show() {
@@ -120,7 +137,12 @@ async function show() {
   if (tab === 'Account') return accountView();
   if (tab === 'Users') return usersView();
   if (tab === 'Payroll') return payrollView();
+  if (tab === 'My Payslips') return myPayslipsView();
+  if (tab === 'Executive') return executiveView();
+  if (tab === 'Remittances') return remittancesView();
+
   const s = SCREENS[tab];
+  if (!s) return;
   let rows = [];
   try { rows = await api(s.path); } catch (e) { return say(esc(e.message), 'err'); }
   const form = !s.readOnly && can(s.write) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) =>
@@ -143,6 +165,101 @@ async function show() {
 }
 const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding)$/.test(c) ? money(v) : /^(date|ts)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
 
+// ---- Employee Self-Service ----
+async function myPayslipsView() {
+  let slips = [];
+  try { slips = await api('/api/me/payslips'); } catch (e) { return say(esc(e.message), 'err'); }
+  $('#view').innerHTML = `<h2>My Payslips</h2>
+  <div class="card scroll">${slips.length ? `<table><thead><tr><th>Period</th><th>Employee</th><th class="num">Gross Pay</th><th class="num">Net Pay</th><th>Approval Date</th><th></th></tr></thead><tbody>` +
+    slips.map((s) => `<tr><td><b>${esc(s.period)}</b></td><td>${esc(s.name)}</td><td class="num">${money(s.gross)}</td><td class="num"><b>${money(s.netPay)}</b></td><td>${s.approvedAt ? new Date(s.approvedAt).toLocaleDateString('en-NG') : ''}</td><td><button class="primary" data-period="${esc(s.period)}">View payslip</button></td></tr>`).join('') +
+    `</tbody></table>` : `<p style="color:var(--muted)">No approved payslips available for your profile yet.</p>`}</div>`;
+
+  $('#view').onclick = async (e) => {
+    const period = e.target.dataset.period;
+    if (!period) return;
+    try {
+      const p = await api(`/api/me/payslips/${period}`);
+      showPayslipModal(p);
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+}
+
+// ---- Executive Dashboard for MD / CFO ----
+async function executiveView(period = $('#execPeriod')?.value || new Date().toISOString().slice(0, 7)) {
+  let data = null;
+  try { data = await api(`/api/dashboard/${period}`); } catch (e) { return say(esc(e.message), 'err'); }
+  const k = data.kpis;
+  $('#view').innerHTML = `<h2>Executive Dashboard</h2>
+  <div class="bar noprint"><label>Period<input id="execPeriod" type="month" value="${period}"></label></div>
+  ${k ? `<div class="msg ${data.status === 'Approved' ? '' : 'warn'}">Status: <b>${esc(data.status)}</b> (Prepared: ${esc(data.preparedBy || 'N/A')}${data.approvedBy ? `, Approved: ${esc(data.approvedBy)}` : ''})</div>
+  <div class="stats">
+    <div><b>${k.headcount}</b><span>Paid Employees</span></div>
+    <div><b>₦${money(k.grossPayroll)}</b><span>Total Gross Payroll</span></div>
+    <div><b>₦${money(k.netPayroll)}</b><span>Total Net Payroll</span></div>
+    <div><b>₦${money(k.otCost)}</b><span>Overtime Cost (${k.otHours} h)</span></div>
+    <div><b>₦${money(k.employerCost)}</b><span>Total Employer Cost</span></div>
+    <div><b>₦${money(k.totalPAYE)}</b><span>Total PAYE Tax</span></div>
+    <div><b>₦${money(k.pensionTotal)}</b><span>Total Pension (18%)</span></div>
+    <div><b>₦${money(k.totalNHF)}</b><span>Total NHF (2.5%)</span></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Department Cost Breakdown</h3>
+    <div class="scroll"><table><thead><tr><th>Department</th><th class="num">Staff Count</th><th class="num">Gross Pay</th><th class="num">Overtime Pay</th><th class="num">Net Pay</th><th class="num">Total Employer Cost</th></tr></thead><tbody>` +
+    data.departmentBreakdown.map((d) => `<tr><td><b>${esc(d.department)}</b></td><td class="num">${d.count}</td><td class="num">${money(d.gross)}</td><td class="num">${money(d.otPay)}</td><td class="num">${money(d.netPay)}</td><td class="num"><b>${money(d.employerCost)}</b></td></tr>`).join('') +
+    `</tbody></table></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Governance & Exceptions</h3>
+    <p>High-Value Payees (≥ ₦1,000,000 net): <b>${data.governance.highValueCount}</b> | Flagged lines: <b>${data.governance.exceptionCount}</b></p>
+    ${data.governance.highValueEmployees.length ? `<div class="scroll" style="margin-bottom:.6rem"><table><thead><tr><th>ID</th><th>Name</th><th>Department</th><th class="num">Gross</th><th class="num">Net Pay</th></tr></thead><tbody>` +
+      data.governance.highValueEmployees.map((h) => `<tr><td>${esc(h.empId)}</td><td>${esc(h.name)}</td><td>${esc(h.department)}</td><td class="num">${money(h.gross)}</td><td class="num"><b>${money(h.netPay)}</b></td></tr>`).join('') + `</tbody></table></div>` : ''}
+    ${data.governance.flaggedEmployees.length ? `<div class="scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Flags</th><th class="num">Net Pay</th></tr></thead><tbody>` +
+      data.governance.flaggedEmployees.map((f) => `<tr><td>${esc(f.empId)}</td><td>${esc(f.name)}</td><td><span class="flag">${f.flags.join(', ')}</span></td><td class="num">${money(f.netPay)}</td></tr>`).join('') + `</tbody></table></div>` : ''}
+    ${data.governance.warnings.length ? `<div style="margin-top:.6rem">${data.governance.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}</div>` : ''}
+  </div>` : `<p style="color:var(--muted)">No payroll data available for ${period}.</p>`}`;
+
+  $('#execPeriod').onchange = () => executiveView($('#execPeriod').value);
+}
+
+// ---- Remittances View for Tax Advisor & Statutory Bodies ----
+async function remittancesView(period = $('#remitPeriod')?.value || new Date().toISOString().slice(0, 7)) {
+  let data = null;
+  try { data = await api(`/api/payroll/${period}/remittances/summary`); } catch (e) { /* none yet */ }
+  $('#view').innerHTML = `<h2>Statutory Remittances & Tax Advisor Schedules</h2>
+  <div class="bar noprint"><label>Period<input id="remitPeriod" type="month" value="${period}"></label>
+    <button id="dlPaye">Download PAYE CSV</button>
+    <button id="dlPension">Download Pension CSV</button>
+    <button id="dlNhf">Download NHF CSV</button></div>
+  ${data ? `<div class="msg">Period <b>${esc(data.period)}</b> (${esc(data.status)}). Total statutory remittance liability: <b>₦${money(data.totalRemittanceLiability)}</b></div>
+  <div class="stats">
+    <div><b>₦${money(data.paye.total)}</b><span>PAYE Remittance</span></div>
+    <div><b>₦${money(data.pension.total)}</b><span>Pension (Employee + Employer)</span></div>
+    <div><b>₦${money(data.nhf.total)}</b><span>NHF Remittance</span></div>
+    <div><b>₦${money(data.levies.nsitf)}</b><span>NSITF Levy (1%)</span></div>
+    <div><b>₦${money(data.levies.itf)}</b><span>ITF Levy (1%)</span></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">PAYE Schedule by State / Tax Authority</h3>
+    <div class="scroll"><table><thead><tr><th>State of Residence</th><th class="num">Staff Count</th><th class="num">Total Gross</th><th class="num">Chargeable Income</th><th class="num">PAYE Remittance</th></tr></thead><tbody>` +
+    data.paye.byState.map((s) => `<tr><td><b>${esc(s.state)}</b></td><td class="num">${s.count}</td><td class="num">${money(s.gross)}</td><td class="num">${money(s.chargeable)}</td><td class="num"><b>${money(s.paye)}</b></td></tr>`).join('') +
+    `</tbody></table></div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Pension & Levies Summary</h3>
+    <p>Employee Pension (8%): <b>₦${money(data.pension.employee)}</b> | Employer Pension (10%): <b>₦${money(data.pension.employer)}</b> | Enrolled: <b>${data.pension.enrolledCount}</b></p>
+    <p>National Housing Fund (2.5% basic): <b>₦${money(data.nhf.total)}</b> | Enrolled: <b>${data.nhf.enrolledCount}</b></p>
+    <p>Statutory Employer Levies: NSITF 1% (₦${money(data.levies.nsitf)}) + ITF 1% (₦${money(data.levies.itf)}) = <b>₦${money(data.levies.nsitf + data.levies.itf)}</b></p>
+  </div>` : `<p style="color:var(--muted)">No statutory remittance figures for ${period} yet. Calculate payroll first.</p>`}`;
+
+  $('#remitPeriod').onchange = () => remittancesView($('#remitPeriod').value);
+  const dl = async (url, fn) => {
+    try { const r = await api(url, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = fn; a.click(); }
+    catch (e) { say(esc(e.message), 'err'); }
+  };
+  $('#dlPaye') && ($('#dlPaye').onclick = () => dl(`/api/payroll/${period}/remittance/paye.csv`, `paye-${period}.csv`));
+  $('#dlPension') && ($('#dlPension').onclick = () => dl(`/api/payroll/${period}/remittance/pension.csv`, `pension-${period}.csv`));
+  $('#dlNhf') && ($('#dlNhf').onclick = () => dl(`/api/payroll/${period}/remittance/nhf.csv`, `nhf-${period}.csv`));
+}
 
 // ---- account and users ----
 function accountView() {
@@ -167,17 +284,19 @@ function accountView() {
 async function usersView() {
   let rows = [];
   try { rows = await api('/api/users'); } catch (e) { return say(esc(e.message), 'err'); }
-  const roles = ['hr', 'payroll', 'approver', 'admin'];
+  const roles = ['hr', 'payroll', 'approver', 'supervisor', 'executive', 'auditor', 'tax_advisor', 'employee', 'admin'];
   $('#view').innerHTML = `<h2>Users</h2>
   <form class="card" id="uf"><h3 style="grid-column:1/-1;margin:0">Add user</h3>
     <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,30}"></label>
     <label>Full name<input name="name" required></label>
     <label>Role<select name="role">${roles.map((r) => `<option>${r}</option>`).join('')}</select></label>
+    <label>Employee ID (optional)<input name="empId" placeholder="e.g. EMP001"></label>
     <label>Temporary password<input name="password" required minlength="10"></label>
     <button class="primary">Create user</button></form>
-  <div class="card scroll"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>` +
+  <div class="card scroll"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Emp ID</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>` +
   rows.map((u) => { const self = u._id === me.id; return `<tr><td>${esc(u.username)}</td><td>${esc(u.name)}</td>
     <td>${self ? u.role : `<select data-role="${u._id}" aria-label="Role for ${esc(u.username)}">${roles.map((r) => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select>`}</td>
+    <td>${esc(u.empId || '')}</td>
     <td>${u.active ? 'Active' : 'Deactivated'}${u.lockUntil && new Date(u.lockUntil) > new Date() ? ' (locked)' : ''}</td>
     <td>${u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-NG') : 'Never'}</td>
     <td>${self ? 'You' : `<button data-toggle="${u._id}" data-active="${u.active}">${u.active ? 'Deactivate' : 'Reactivate'}</button> <button data-reset="${u._id}">Reset password</button>`}</td></tr>`; }).join('') + '</tbody></table></div>';
@@ -185,7 +304,7 @@ async function usersView() {
   $('#uf').onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target.elements;
-    try { await api('/api/users', { method: 'POST', body: { username: f.username.value, name: f.name.value, role: f.role.value, password: f.password.value } });
+    try { await api('/api/users', { method: 'POST', body: { username: f.username.value, name: f.name.value, role: f.role.value, empId: f.empId.value || undefined, password: f.password.value } });
       say('User created. Give them the temporary password; they must change it at first sign-in.'); usersView(); } catch (err) { say(esc(err.message), 'err'); }
   };
   $('#view').onclick = async (e) => {
@@ -211,8 +330,9 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   $('#view').innerHTML = `<h2>Payroll</h2>
   <div class="bar noprint"><label>Period<input id="period" type="month" value="${period}"></label>
     ${can(['payroll']) ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
-    ${can(['approver']) && run?.status === 'Draft' ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
-    ${run?.status === 'Approved' && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}</div>
+    ${can(['approver', 'executive']) && run?.status === 'Draft' ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
+    ${run?.status === 'Approved' && can(['payroll', 'approver', 'executive']) ? '<button id="bank">Download bank file</button>' : ''}
+    ${can(['tax_advisor', 'approver', 'executive']) ? '<button id="toRemit">View Remittances</button>' : ''}</div>
   ${run ? `<div class="msg ${run.status === 'Approved' ? '' : 'warn'}">${run.status === 'Approved' ? `Approved by ${esc(run.approvedBy)}. This period is locked.` : `Draft prepared by ${esc(run.preparedBy)}. Not yet approved.`}</div>
   ${run.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}
   <div class="stats">${[['Employees', t.employees], ['Gross pay', money(t.gross)], ['PAYE', money(t.paye)], ['Pension (employee)', money(t.pension)], ['Net pay', money(t.net)]].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
@@ -220,6 +340,7 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
     run.lines.map((l) => `<tr><td>${esc(l.empId)}</td><td>${esc(l.name)}</td><td>${esc(l.department)}</td>${['basic', 'otPay', 'bonuses', 'gross', 'pension', 'nhf', 'paye', 'loanDeduction', 'otherDeductions', 'netPay'].map((k) => `<td class="num">${money(l[k])}</td>`).join('')}<td>${l.flags.length ? `<span class="flag">${l.flags.join(', ')}</span> ` : ''}<button data-slip="${esc(l.empId)}">Payslip</button></td></tr>`).join('') + '</tbody></table></div>'
     : `<p style="color:var(--muted)">No payroll for ${period} yet. Choose Calculate payroll to build it from approved attendance, adjustments and active loans.</p>`}`;
   $('#period').onchange = () => payrollView($('#period').value);
+  $('#toRemit') && ($('#toRemit').onclick = () => { tab = 'Remittances'; show(); });
   $('#calc') && ($('#calc').onclick = async () => { try { await api(`/api/payroll/${$('#period').value}/calculate`, { method: 'POST' }); say('Payroll calculated.'); payrollView($('#period').value); } catch (e) { say(esc(e.message), 'err'); } });
   $('#appr') && ($('#appr').onclick = async () => {
     if (!confirm('Approve and lock this period? Loan balances will be updated and it cannot be edited afterwards.')) return;
@@ -231,12 +352,10 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   });
   $('#view').onclick = async (e) => {
     const id = e.target.dataset.slip; if (!id) return;
-    const p = await api(`/api/payroll/${period}/payslip/${id}`);
-    const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
-    $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${p.period}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}${p.status !== 'Approved' ? '<br><b class="flag">Draft, not approved</b>' : ''}</p>
-    <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
-    <p class="noprint" style="display:flex;gap:.5rem"><button onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
-    $('#slip').showModal();
+    try {
+      const p = await api(`/api/payroll/${period}/payslip/${id}`);
+      showPayslipModal(p);
+    } catch (err) { say(esc(err.message), 'err'); }
   };
 }
 
@@ -244,6 +363,12 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
 async function start() {
   try { me = await api('/api/me'); } catch (e) { sessionStorage.clear(); return; }
   if (me.mustChangePassword) tab = 'Account';
+  else if (me.role === 'employee') tab = 'My Payslips';
+  else if (me.role === 'supervisor') tab = 'Attendance';
+  else if (me.role === 'tax_advisor') tab = 'Remittances';
+  else if (me.role === 'executive') tab = 'Executive';
+  else if (me.role === 'auditor') tab = 'Audit';
+  else tab = 'Payroll';
   $('#login').style.display = 'none'; $('#app').style.display = 'grid'; show();
 }
 $('#loginForm').onsubmit = async (e) => {
