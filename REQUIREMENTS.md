@@ -112,17 +112,17 @@ The factory pays a mix of salaried and hourly production staff across day, night
 - **In scope:** employee master data; shift configuration; attendance and overtime; loans; leave; bonuses; payroll input consolidation; gross-to-net calculation; statutory deductions (employee pension, NHF, PAYE) and employer contributions; payroll register; payslips; bank transfer schedule; audit log; dashboard and reports; period open/lock/approval; access control; extended integrations (recruitment & onboarding, appraisals, employee self-service, GL journal posting, direct bank payments, multi-country tax packs, multi-currency, and time-clock biometric punch synchronization per Section 4.17).
 
 ### 3.4 Stakeholders
-| Stakeholder | Role / interest |
-|---|---|
-| Payroll Officer | Prepares inputs, runs calculations, produces payslips and bank file |
-| Finance/Payroll Manager | Reviews and approves payroll, signs off remittances |
-| HR Manager / HR Officer | Owns employee master data, leave, contracts |
-| Production/Shift Supervisors | Submit and approve attendance and overtime |
-| Managing Director / CFO | Receives dashboards; final approver for high-value or exception payroll |
-| Employees | Receive accurate and timely pay; view payslips |
-| Internal Audit | Reviews controls and the audit log |
-| External Tax Advisor / Statutory bodies (NRS, state IRS, PFAs, FMBN, NSITF, ITF) | Rates, bands, remittance requirements |
-| IT Support | Hosting, backups, access administration |
+| Stakeholder | Role / interest | System Role | Implemented Workflows & Views |
+|---|---|---|---|
+| Payroll Officer | Prepares inputs, runs calculations, produces payslips and bank file | `payroll` | Payroll run calculation, attendance/loan/bonus input creation, payslips, bank CSV export |
+| Finance/Payroll Manager | Reviews and approves payroll, signs off remittances | `approver` | Payroll review & approval/locking, loan/adjustment sign-off, bank schedule download, remittance review |
+| HR Manager / HR Officer | Owns employee master data, leave, contracts | `hr` | Employee master maintenance (salaries, allowances, bank, TIN, PFA), loan and adjustment initiation |
+| Production/Shift Supervisors | Submit and approve attendance and overtime | `supervisor` | Attendance entry, shift multiplier validation, overtime review and approval (with segregation of duties) |
+| Managing Director / CFO | Receives dashboards; final approver for high-value or exception payroll | `executive` | Executive Dashboard (`/api/dashboard/:period`) with department cost breakdown, high-value payee audit, payroll approval |
+| Employees | Receive accurate and timely pay; view payslips | `employee` | Self-service payslip portal (`/api/me/payslips`), monthly payslip viewing and printing |
+| Internal Audit | Reviews controls and the audit log | `auditor` | Read-only access to immutable audit log (`/api/audit`), historical payroll runs, master data, and calculation logs |
+| External Tax Advisor / Statutory bodies (NRS, state IRS, PFAs, FMBN, NSITF, ITF) | Rates, bands, remittance requirements | `tax_advisor` | Statutory remittances summary (`/api/payroll/:period/remittances/summary`) and CSV export schedules (PAYE, Pension, NHF) |
+| IT Support | Hosting, backups, access administration | `admin` | User account provisioning, password resets, role assignment, system infrastructure administration |
 
 ### 3.5 Business rules
 - **BRL-01:** Each employee has a unique EmpID that is never reused.
@@ -348,7 +348,7 @@ Monthly: Basic ₦150,000, Housing ₦60,000, Transport ₦40,000 (all pensionab
 | ID | Requirement | Pri |
 |---|---|---|
 | FR-SEC-01 | The system shall authenticate users individually (no shared accounts) with strong passwords and, where available, MFA. | M |
-| FR-SEC-02 | Role-based access control with at least: Admin, Payroll Officer (prepare), Payroll Manager/Finance Approver (review/approve), HR Officer/Manager (master data, leave), Supervisor (attendance and OT approval for own team), Auditor (read-only incl. audit log), Employee (own payslip only, if self-service enabled). | M |
+| FR-SEC-02 | Role-based access control supporting all 9 factory stakeholders: Admin (`admin`), Payroll Officer (`payroll`: prepare/calculate), Finance/Payroll Manager (`approver`: review/approve), HR Officer/Manager (`hr`: master data), Production/Shift Supervisor (`supervisor`: attendance & OT approval with segregation of duties), Managing Director/CFO (`executive`: dashboards, variance & exception sign-off), Auditor (`auditor`: read-only audit log & registers), Tax Advisor (`tax_advisor`: statutory remittances & CSV schedules), Employee (`employee`: self-service payslip access). | M |
 | FR-SEC-03 | Segregation of duties: the preparer cannot approve; the creator of a loan or bonus cannot approve it; HR cannot approve payroll. | M |
 | FR-SEC-04 | Salary, bank and tax data shall be visible only to authorised roles; sensitive fields masked elsewhere. | M |
 | FR-SEC-05 | If delivered in Excel: all formula cells and reference sheets shall be locked/protected, inputs restricted via data validation, and the file kept on access-controlled storage with version history. | M |
