@@ -37,6 +37,25 @@ DEFAULT_SHIFT_RULES: Dict[ShiftType, ShiftRule] = {
 }
 
 @dataclass
+class PayComponent:
+    name: str
+    amount: Decimal
+    taxable: bool = True
+    pensionable: bool = True
+    recurring: bool = True
+
+@dataclass
+class SalaryHistoryRecord:
+    effective_date: str
+    basic: Decimal
+    housing: Decimal = Decimal('0.00')
+    transport: Decimal = Decimal('0.00')
+    other_allowance: Decimal = Decimal('0.00')
+    hourly_rate: Decimal = Decimal('0.00')
+    reason: str = "Initial salary"
+    changed_by: str = "HR"
+
+@dataclass
 class Employee:
     emp_id: str
     surname: str
@@ -49,13 +68,30 @@ class Employee:
     transport_allowance: Decimal = Decimal('0.00')
     other_allowances: Decimal = Decimal('0.00')
     hourly_rate: Optional[Decimal] = None
+    hourly_rate_override_reason: Optional[str] = None
     pension_pct: Decimal = Decimal('0.08')
     nhf_pct: Decimal = Decimal('0.025')
     nhf_enrolled: bool = True
     annual_rent: Decimal = Decimal('0.00')
-    bank: str = "First Bank"
+    rent_evidence_ref: Optional[str] = None
+    bank: str = "First Bank of Nigeria"
+    bank_code: str = "011"
     account_no: str = "0123456789"
+    employment_type: str = "Permanent"
+    pay_frequency: str = "Monthly"
+    state: str = "Lagos"
+    tin: Optional[str] = None
+    pension_pin: Optional[str] = None
+    pfa: Optional[str] = None
+    nhf_number: Optional[str] = None
+    dob: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    termination_date: Optional[str] = None
     status: EmployeeStatus = EmployeeStatus.ACTIVE
+    pay_components: List[PayComponent] = field(default_factory=list)
+    salary_history: List[SalaryHistoryRecord] = field(default_factory=list)
 
     def __post_init__(self):
         self.basic_salary = quantize_currency(Decimal(str(self.basic_salary)))
@@ -66,7 +102,7 @@ class Employee:
         self.pension_pct = Decimal(str(self.pension_pct))
         self.nhf_pct = Decimal(str(self.nhf_pct))
         if self.hourly_rate is None:
-            # Default derived formula: basic_salary / 176 (22 working days * 8h)
+            # FR-EMP-04: Default derived formula: basic_salary / 176 (standard monthly hours)
             if self.basic_salary > Decimal('0'):
                 self.hourly_rate = quantize_currency(self.basic_salary / Decimal('176'))
             else:

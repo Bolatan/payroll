@@ -52,15 +52,13 @@ def harden_workbook(filename, output_filenames):
     for row in pita_bands:
         ws_tax.append(row)
 
-    # 2. Update Employee_Master to include essential compliance columns
-    # Existing: ['EmpID', 'Surname', 'FirstName', 'Department', 'Position', 'HireDate', 'BasicSalary', 'HourlyRate', 'Pension%', 'PAYE%', 'NHF%', 'Bank', 'AccountNo', 'Status']
-    # Add Housing, Transport, AnnualRent, RentReliefEligible, NHF_Enrolled (Yes/No)
+    # 2. Update Employee_Master to include essential compliance columns (FR-EMP-01 through FR-EMP-08)
     ws_emp = wb['Employee_Master']
     emp_headers = [
-        'EmpID', 'Surname', 'FirstName', 'Department', 'Position', 'HireDate',
+        'EmpID', 'Surname', 'FirstName', 'Department', 'Position', 'EmploymentType', 'PayFrequency', 'HireDate',
         'BasicSalary', 'HousingAllowance', 'TransportAllowance', 'OtherAllowances',
-        'HourlyRate', 'Pension%', 'NHF%', 'NHF_Enrolled', 'AnnualRent',
-        'Bank', 'AccountNo', 'Status'
+        'HourlyRate', 'HourlyRateOverrideReason', 'Pension%', 'NHF%', 'NHF_Enrolled', 'AnnualRent', 'RentEvidenceRef',
+        'Bank', 'BankCode', 'AccountNo', 'State', 'TIN', 'PensionPIN', 'PFA', 'NHFNumber', 'DOB', 'Phone', 'Email', 'EmergencyContact', 'Status'
     ]
     ws_emp.delete_rows(1, ws_emp.max_row)
     ws_emp.append(emp_headers)

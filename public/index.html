@@ -90,14 +90,24 @@ function say(text, kind = '') { $('#msg').innerHTML = text ? `<div class="msg ${
 const shifts = ['Day', 'Night', 'Weekend', 'Holiday'];
 const countries = ['NG', 'GH', 'KE'];
 const currencies = ['NGN', 'GHS', 'KES', 'USD'];
+const empStatuses = ['Active', 'On Leave', 'Suspended', 'Terminated'];
+const empTypes = ['Permanent', 'Contract', 'Casual'];
+const payFreqs = ['Monthly', 'Weekly', 'Bi-Weekly'];
 
 const SCREENS = {
   Employees: { path: '/api/employees', roles: ['hr', 'payroll', 'approver'], write: ['hr'], key: 'empId',
-    fields: [['empId', 'Employee ID'], ['surname', 'Surname'], ['firstName', 'First name'], ['department', 'Department'], ['position', 'Position'],
-      ['country', 'Country', 'select', countries], ['currency', 'Currency', 'select', currencies],
-      ['basic', 'Basic (monthly)', 'number'], ['housing', 'Housing', 'number'], ['transport', 'Transport', 'number'], ['otherAllowance', 'Other allowance', 'number'],
-      ['annualRent', 'Annual rent paid', 'number'], ['bank', 'Bank'], ['accountNo', 'Account no.'], ['state', 'State of residence'], ['nhfEnrolled', 'Enrolled in NHF', 'check']],
-    cols: ['empId', 'surname', 'firstName', 'department', 'country', 'currency', 'basic', 'bank', 'accountNo', 'status'] },
+    fields: [['empId', 'Employee ID (leave blank to auto-generate)'], ['surname', 'Surname'], ['firstName', 'First name'], ['department', 'Department'], ['position', 'Position'],
+      ['employmentType', 'Employment Type', 'select', empTypes], ['payFrequency', 'Pay Frequency', 'select', payFreqs],
+      ['hireDate', 'Hire Date', 'date'], ['country', 'Country', 'select', countries], ['currency', 'Currency', 'select', currencies],
+      ['basic', 'Basic (monthly)', 'number'], ['hourlyRate', 'Hourly Rate (optional)', 'number'], ['hourlyRateOverrideReason', 'Hourly Rate Override Reason'],
+      ['housing', 'Housing', 'number'], ['transport', 'Transport', 'number'], ['otherAllowance', 'Other allowance', 'number'],
+      ['annualRent', 'Annual rent paid', 'number'], ['rentEvidenceRef', 'Rent Evidence Ref'],
+      ['bank', 'Bank Name'], ['accountNo', 'Account No (10-digit NUBAN)'],
+      ['state', 'State of residence'], ['tin', 'Tax ID (TIN)'], ['pensionPin', 'Pension PIN'], ['pfa', 'PFA Name'], ['nhfNumber', 'NHF Number'],
+      ['pensionPct', 'Pension % (default 0.08)', 'number'], ['nhfPct', 'NHF % (default 0.025)', 'number'], ['nhfEnrolled', 'Enrolled in NHF', 'check'],
+      ['dob', 'Date of Birth', 'date'], ['phone', 'Phone Number'], ['email', 'Email Address'], ['emergencyContact', 'Emergency Contact'],
+      ['status', 'Status', 'select', empStatuses]],
+    cols: ['empId', 'surname', 'firstName', 'department', 'position', 'employmentType', 'basic', 'hourlyRate', 'bank', 'accountNo', 'status'] },
   Attendance: { path: '/api/attendance', roles: ['payroll', 'approver', 'hr'], write: ['payroll'], approve: ['approver'],
     fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number']],
     cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'source', 'approved'] },
@@ -155,6 +165,18 @@ async function show() {
   let extraActions = '';
   if (tab === 'Time-Clock' && can(['payroll'])) {
     extraActions = `<div class="bar noprint"><button id="processPunches" class="primary">Pair & Process Punches to Attendance</button></div>`;
+  } else if (tab === 'Employees') {
+    extraActions = `<div class="bar noprint">
+      <button id="exportEmps">Export Employees CSV</button>
+      ${can(['hr']) ? '<button id="importEmpsBtn">Bulk Import CSV / JSON</button>' : ''}
+    </div>
+    <div id="importArea" class="card" style="display:none">
+      <h3>Bulk Import Employees</h3>
+      <p style="color:var(--muted);font-size:.85rem">Paste a JSON array of employee objects or JSON rows to import with row-level validation.</p>
+      <textarea id="importPayload" rows="6" placeholder='[{"surname":"Doe","firstName":"Jane","basic":180000,"bank":"Access Bank","accountNo":"0123456789"}]'></textarea>
+      <div style="margin-top:.6rem"><button id="doImport" class="primary">Execute Import</button> <button id="cancelImport">Cancel</button></div>
+      <div id="importResult" style="margin-top:.6rem"></div>
+    </div>`;
   }
 
   const form = !s.readOnly && can(s.write) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) =>
@@ -163,11 +185,13 @@ async function show() {
     : `<label>${label}<input name="${k}" type="${type}" ${type === 'number' ? 'step="any" min="0"' : ''}></label>`).join('') + `<button class="primary">Save</button></form>` : '';
   const canApprove = s.approve && can(s.approve);
   const isRecruitment = tab === 'Recruitment' && can(['hr']);
+  const isEmployees = tab === 'Employees';
 
-  $('#view').innerHTML = `<h2>${tab}</h2>${extraActions}${form}<div class="card scroll">${rows.length ? `<table><thead><tr>${s.cols.map((c) => `<th>${c}</th>`).join('')}${(canApprove || isRecruitment) ? '<th>Action</th>' : ''}</tr></thead><tbody>` +
-    rows.map((r) => `<tr>${s.cols.map((c) => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${fmt(c, r[c])}</td>`).join('')}${(canApprove || isRecruitment) ? `<td>` +
+  $('#view').innerHTML = `<h2>${tab}</h2>${extraActions}${form}<div class="card scroll">${rows.length ? `<table><thead><tr>${s.cols.map((c) => `<th>${c}</th>`).join('')}${(canApprove || isRecruitment || isEmployees) ? '<th>Action</th>' : ''}</tr></thead><tbody>` +
+    rows.map((r) => `<tr>${s.cols.map((c) => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${fmt(c, r[c])}</td>`).join('')}${(canApprove || isRecruitment || isEmployees) ? `<td>` +
       ((canApprove && (s.pending ? s.pending(r) : r.approved === false)) ? `<button data-id="${r._id}">Approve</button> ` : '') +
-      ((isRecruitment && r.stage !== 'Hired') ? `<button data-hire="${r._id}">Hire & Onboard</button>` : '') +
+      ((isRecruitment && r.stage !== 'Hired') ? `<button data-hire="${r._id}">Hire & Onboard</button> ` : '') +
+      ((isEmployees && can(['hr']) && r.status !== 'Terminated') ? `<button data-deact="${r.empId}">Deactivate</button>` : '') +
       `</td>` : ''}</tr>`).join('') + `</tbody></table>` : `<p style="color:var(--muted)">Nothing here yet.${form ? ' Use the form above to add the first record.' : ''}</p>`}</div>`;
 
   if ($('#processPunches')) {
@@ -184,12 +208,51 @@ async function show() {
     try { await api(s.path, { method: 'POST', body }); say('Saved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
   };
 
-  if (canApprove || isRecruitment) $('#view').onclick = async (e) => {
+  if ($('#exportEmps')) {
+    $('#exportEmps').onclick = async () => {
+      try {
+        const r = await api('/api/employees/export', { raw: true });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(await r.blob());
+        a.download = `employees-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+      } catch (err) { say(esc(err.message), 'err'); }
+    };
+  }
+
+  if ($('#importEmpsBtn')) {
+    $('#importEmpsBtn').onclick = () => {
+      const el = $('#importArea');
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    };
+    $('#cancelImport').onclick = () => { $('#importArea').style.display = 'none'; };
+    $('#doImport').onclick = async () => {
+      const raw = $('#importPayload').value.trim();
+      if (!raw) return say('Please paste JSON records to import.', 'warn');
+      try {
+        const data = JSON.parse(raw);
+        const res = await api('/api/employees/bulk-import', { method: 'POST', body: data });
+        say(`Import complete: ${res.imported} succeeded, ${res.failed} failed.`);
+        $('#importResult').innerHTML = `<p><b>Total:</b> ${res.total} | <b>Imported:</b> ${res.imported} | <b>Failed:</b> ${res.failed}</p>` +
+          (res.report.length ? `<ul>${res.report.map((r) => `<li>Row ${r.row} (${esc(r.empId)}): ${esc(r.status)} ${r.errors ? '- ' + esc(r.errors.join(', ')) : ''}</li>`).join('')}</ul>` : '');
+        setTimeout(show, 2000);
+      } catch (err) { say(esc(err.message), 'err'); }
+    };
+  }
+
+  if (canApprove || isRecruitment || isEmployees) $('#view').onclick = async (e) => {
     if (e.target.dataset.id) {
       try { await api(`${s.path}/${e.target.dataset.id}/approve`, { method: 'POST' }); say('Approved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
     } else if (e.target.dataset.hire) {
       try { await api(`/api/recruitment/${e.target.dataset.hire}/hire`, { method: 'POST', body: {} }); say('Candidate hired and added to Employee master.'); show(); }
       catch (err) { say(esc(err.message), 'err'); }
+    } else if (e.target.dataset.deact) {
+      if (!confirm(`Are you sure you want to deactivate and terminate employee ${e.target.dataset.deact}?`)) return;
+      try {
+        await api(`/api/employees/${e.target.dataset.deact}/deactivate`, { method: 'POST', body: {} });
+        say('Employee deactivated and marked Terminated.');
+        show();
+      } catch (err) { say(esc(err.message), 'err'); }
     }
   };
 }
