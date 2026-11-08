@@ -1,4 +1,7 @@
 {
+  "framework": null,
+  "buildCommand": null,
+  "outputDirectory": "public",
   "rewrites": [{ "source": "/api/(.*)", "destination": "/api" }],
   "functions": { "api/index.js": { "maxDuration": 30 } }
 }
