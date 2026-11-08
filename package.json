@@ -1,0 +1,16 @@
+{
+  "name": "factory-payroll",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Factory payroll system: Express + MongoDB (Mongoose) on Vercel",
+  "main": "api/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "node --env-file=.env server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5"
+  }
+}
