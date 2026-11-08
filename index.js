@@ -1,24 +1,30 @@
 const express = require('express');
 const connect = require('../lib/db');
-const { Employee, Attendance, Loan, Adjustment, PayrollRun, Audit } = require('../lib/models');
+const { User, Employee, Attendance, Loan, Adjustment, PayrollRun, Audit } = require('../lib/models');
 const { calcLine, hoursBetween } = require('../lib/payroll');
 const { r2 } = require('../lib/tax');
+const { sign, verify, hash, compare, checkPassword } = require('../lib/auth');
 
 const app = express();
 app.use(express.json());
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-const users = () => { try { return JSON.parse(process.env.USERS || '[]'); } catch { return []; } };
-
-// Authentication: x-api-key identifies the user; role decides permissions.
-const auth = (...roles) => (req, res, next) => {
-  const u = users().find((x) => x.key && x.key === req.get('x-api-key'));
-  if (!u) return res.status(401).json({ error: 'Sign in with a valid access key.' });
+// Authentication: signed token (Authorization: Bearer) -> user loaded from MongoDB on every request,
+// so deactivation, role changes and password resets take effect immediately.
+const makeAuth = (roles, allowPasswordChange) => wrap(async (req, res, next) => {
+  let p;
+  try { p = verify((req.get('authorization') || '').replace(/^Bearer /, '')); }
+  catch { return res.status(401).json({ error: 'Please sign in again.' }); }
+  const u = await User.findById(p.sub).lean();
+  if (!u || !u.active || u.tokenVersion !== p.tv) return res.status(401).json({ error: 'Please sign in again.' });
+  if (u.mustChangePassword && !allowPasswordChange)
+    return res.status(403).json({ error: 'Change your password to continue.', code: 'PASSWORD_CHANGE_REQUIRED' });
   if (roles.length && u.role !== 'admin' && !roles.includes(u.role))
     return res.status(403).json({ error: `Your role (${u.role}) cannot do this.` });
-  req.user = u;
+  req.user = { id: String(u._id), name: u.username, displayName: u.name, role: u.role, mustChangePassword: u.mustChangePassword };
   next();
-};
+});
+const auth = (...roles) => makeAuth(roles, false);
 const log = (req, action, entity, entityId, details) =>
   Audit.create({ user: req.user.name, action, entity, entityId: String(entityId), details });
 
@@ -31,7 +37,94 @@ const validPeriod = (p) => /^\d{4}-(0[1-9]|1[0-2])$/.test(p);
 app.use('/api', wrap(async (req, res, next) => { await connect(); next(); }));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
-app.get('/api/me', auth(), (req, res) => res.json({ name: req.user.name, role: req.user.role }));
+const audit = (user, action, entity, entityId, details) => Audit.create({ user, action, entity, entityId: String(entityId), details });
+
+// First administrator comes from ADMIN_USERNAME / ADMIN_PASSWORD, only while no users exist. Remove them afterwards.
+async function bootstrapAdmin() {
+  const { ADMIN_USERNAME: un, ADMIN_PASSWORD: pw } = process.env;
+  if (!un || !pw || checkPassword(pw) || (await User.estimatedDocumentCount()) > 0) return;
+  try {
+    await User.create({ username: un, name: process.env.ADMIN_NAME || 'Administrator', role: 'admin', passwordHash: await hash(pw), mustChangePassword: true });
+    await audit('system', 'bootstrap_admin', 'User', un, {});
+  } catch (e) { if (e.code !== 11000) throw e; }
+}
+const MAX_FAILS = 5, LOCK_MINUTES = 15;
+
+app.post('/api/auth/login', wrap(async (req, res) => {
+  await bootstrapAdmin();
+  const username = String(req.body.username || '').toLowerCase().trim();
+  const password = String(req.body.password || '');
+  const u = await User.findOne({ username }).select('+passwordHash');
+  if (!u || !u.active) {
+    await compare(password, '$2a$10$7EqJtq98hPqEX7fNZaFWoOhi5BoVDCT3o2n5H1X3x0pP5L4i6p9bK'); // equalise timing
+    await audit(username || 'unknown', 'login_failed', 'User', username, {});
+    return res.status(401).json({ error: 'Incorrect username or password.' });
+  }
+  if (u.lockUntil && u.lockUntil > new Date())
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${LOCK_MINUTES} minutes.` });
+  if (!(await compare(password, u.passwordHash))) {
+    u.failedLogins += 1;
+    if (u.failedLogins >= MAX_FAILS) { u.lockUntil = new Date(Date.now() + LOCK_MINUTES * 60000); u.failedLogins = 0; }
+    await u.save();
+    await audit(u.username, 'login_failed', 'User', u.username, {});
+    return res.status(401).json({ error: 'Incorrect username or password.' });
+  }
+  u.failedLogins = 0; u.lockUntil = undefined; u.lastLogin = new Date();
+  await u.save();
+  await audit(u.username, 'login', 'User', u.username, {});
+  res.json({ token: sign(u), user: { id: String(u._id), username: u.username, name: u.name, role: u.role, mustChangePassword: u.mustChangePassword } });
+}));
+
+app.get('/api/me', makeAuth([], true), (req, res) =>
+  res.json({ id: req.user.id, username: req.user.name, name: req.user.displayName, role: req.user.role, mustChangePassword: req.user.mustChangePassword }));
+
+app.post('/api/auth/change-password', makeAuth([], true), wrap(async (req, res) => {
+  const { current, next } = req.body;
+  const problem = checkPassword(next);
+  if (problem) return res.status(400).json({ error: problem });
+  const u = await User.findById(req.user.id).select('+passwordHash');
+  if (!(await compare(String(current || ''), u.passwordHash))) return res.status(400).json({ error: 'Your current password is incorrect.' });
+  if (current === next) return res.status(400).json({ error: 'The new password must be different.' });
+  u.passwordHash = await hash(next); u.mustChangePassword = false; u.tokenVersion += 1;
+  await u.save();
+  await audit(u.username, 'change_password', 'User', u.username, {});
+  res.json({ token: sign(u) });
+}));
+
+// ---- User management (admin) ----
+app.get('/api/users', auth('admin'), wrap(async (req, res) => res.json(await User.find().sort('username').lean())));
+app.post('/api/users', auth('admin'), wrap(async (req, res) => {
+  const { username, name, role, password } = req.body;
+  const problem = checkPassword(password);
+  if (problem) return res.status(400).json({ error: problem });
+  const u = await User.create({ username, name, role, passwordHash: await hash(password), mustChangePassword: true });
+  await log(req, 'create', 'User', u.username, { role: u.role });
+  res.status(201).json({ id: u._id, username: u.username });
+}));
+app.put('/api/users/:id', auth('admin'), wrap(async (req, res) => {
+  if (req.params.id === req.user.id) return res.status(400).json({ error: 'You cannot change your own role or status.' });
+  const change = {};
+  for (const k of ['name', 'role', 'active']) if (k in req.body) change[k] = req.body[k];
+  const u = await User.findById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  const before = { name: u.name, role: u.role, active: u.active };
+  u.set(change);
+  if (change.role !== undefined || change.active === false) u.tokenVersion += 1; // sign them out
+  await u.save();
+  await log(req, 'update', 'User', u.username, { before, after: change });
+  res.json({ id: u._id });
+}));
+app.post('/api/users/:id/reset-password', auth('admin'), wrap(async (req, res) => {
+  const problem = checkPassword(req.body.password);
+  if (problem) return res.status(400).json({ error: problem });
+  const u = await User.findById(req.params.id);
+  if (!u) return res.status(404).json({ error: 'User not found.' });
+  u.passwordHash = await hash(req.body.password); u.mustChangePassword = true; u.tokenVersion += 1; u.failedLogins = 0; u.lockUntil = undefined;
+  await u.save();
+  await log(req, 'reset_password', 'User', u.username, {});
+  res.json({ ok: true });
+}));
+
 
 // ---- Employees (HR) ----
 app.get('/api/employees', auth('hr', 'payroll', 'approver'), wrap(async (req, res) =>

@@ -53,9 +53,10 @@ dialog table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 <body>
 <section id="login">
   <h1>Factory Payroll</h1>
-  <p style="color:var(--muted);margin-top:0">Sign in with the access key your administrator gave you.</p>
+  <p style="color:var(--muted);margin-top:0">Sign in with your username and password.</p>
   <form id="loginForm" style="grid-template-columns:1fr">
-    <label>Access key<input id="key" type="password" autocomplete="current-password" required></label>
+    <label>Username<input id="user" autocomplete="username" required></label>
+    <label>Password<input id="key" type="password" autocomplete="current-password" required></label>
     <button class="primary">Sign in</button>
   </form>
   <p id="loginErr" class="flag" role="alert"></p>
@@ -74,9 +75,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 let me = null, tab = 'Payroll';
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-api-key': sessionStorage.getItem('key') || '' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (sessionStorage.getItem('token') || '') }, body: opts.body ? JSON.stringify(opts.body) : undefined });
   if (opts.raw) { if (!res.ok) throw new Error((await res.json()).error); return res; }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== '/api/auth/login') { sessionStorage.clear(); location.reload(); }
+  if (data.code === 'PASSWORD_CHANGE_REQUIRED' && me) { me.mustChangePassword = true; tab = 'Account'; show(); }
   if (!res.ok) { const e = new Error(data.error || 'Request failed'); e.data = data; throw e; }
   return data;
 }
@@ -104,7 +107,7 @@ const SCREENS = {
 const can = (list) => me.role === 'admin' || list.includes(me.role);
 
 function renderNav() {
-  const items = ['Payroll', ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles))];
+  const items = me.mustChangePassword ? ['Account'] : ['Payroll', ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)), ...(me.role === 'admin' ? ['Users'] : []), 'Account'];
   $('#nav').innerHTML = `<strong>Factory Payroll</strong>` + items.map((t) => `<button data-t="${t}" ${t === tab ? 'aria-current="true"' : ''}>${t}</button>`).join('') +
     `<div class="who">${esc(me.name)} (${me.role})<br><button id="out" style="margin-top:.4rem">Sign out</button></div>`;
   $('#nav').onclick = (e) => { if (e.target.dataset.t) { tab = e.target.dataset.t; say(''); show(); } };
@@ -113,6 +116,8 @@ function renderNav() {
 
 async function show() {
   renderNav();
+  if (tab === 'Account') return accountView();
+  if (tab === 'Users') return usersView();
   if (tab === 'Payroll') return payrollView();
   const s = SCREENS[tab];
   let rows = [];
@@ -136,6 +141,66 @@ async function show() {
   };
 }
 const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding)$/.test(c) ? money(v) : /^(date|ts)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
+
+
+// ---- account and users ----
+function accountView() {
+  $('#view').innerHTML = `<h2>Account</h2>${me.mustChangePassword ? '<div class="msg warn">Choose a new password before you continue.</div>' : ''}
+  <form class="card" id="pw" style="max-width:360px;grid-template-columns:1fr"><h3 style="margin:0">Change password</h3>
+    <label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password<input name="next" type="password" autocomplete="new-password" minlength="10" required></label>
+    <label>Confirm new password<input name="again" type="password" autocomplete="new-password" required></label>
+    <p style="margin:0;color:var(--muted);font-size:.85rem">At least 10 characters, with a letter and a number.</p>
+    <button class="primary">Save password</button></form>`;
+  $('#pw').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    if (f.next.value !== f.again.value) return say('The new passwords do not match.', 'err');
+    try {
+      const r = await api('/api/auth/change-password', { method: 'POST', body: { current: f.current.value, next: f.next.value } });
+      sessionStorage.setItem('token', r.token); me.mustChangePassword = false; tab = 'Payroll'; say('Password changed.'); show();
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+}
+
+async function usersView() {
+  let rows = [];
+  try { rows = await api('/api/users'); } catch (e) { return say(esc(e.message), 'err'); }
+  const roles = ['hr', 'payroll', 'approver', 'admin'];
+  $('#view').innerHTML = `<h2>Users</h2>
+  <form class="card" id="uf"><h3 style="grid-column:1/-1;margin:0">Add user</h3>
+    <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,30}"></label>
+    <label>Full name<input name="name" required></label>
+    <label>Role<select name="role">${roles.map((r) => `<option>${r}</option>`).join('')}</select></label>
+    <label>Temporary password<input name="password" required minlength="10"></label>
+    <button class="primary">Create user</button></form>
+  <div class="card scroll"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>` +
+  rows.map((u) => { const self = u._id === me.id; return `<tr><td>${esc(u.username)}</td><td>${esc(u.name)}</td>
+    <td>${self ? u.role : `<select data-role="${u._id}" aria-label="Role for ${esc(u.username)}">${roles.map((r) => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select>`}</td>
+    <td>${u.active ? 'Active' : 'Deactivated'}${u.lockUntil && new Date(u.lockUntil) > new Date() ? ' (locked)' : ''}</td>
+    <td>${u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-NG') : 'Never'}</td>
+    <td>${self ? 'You' : `<button data-toggle="${u._id}" data-active="${u.active}">${u.active ? 'Deactivate' : 'Reactivate'}</button> <button data-reset="${u._id}">Reset password</button>`}</td></tr>`; }).join('') + '</tbody></table></div>';
+
+  $('#uf').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    try { await api('/api/users', { method: 'POST', body: { username: f.username.value, name: f.name.value, role: f.role.value, password: f.password.value } });
+      say('User created. Give them the temporary password; they must change it at first sign-in.'); usersView(); } catch (err) { say(esc(err.message), 'err'); }
+  };
+  $('#view').onclick = async (e) => {
+    const d = e.target.dataset;
+    try {
+      if (d.toggle) { await api(`/api/users/${d.toggle}`, { method: 'PUT', body: { active: d.active !== 'true' } }); say('User updated.'); usersView(); }
+      if (d.reset) { const pw = prompt('Enter a temporary password (10+ characters, with a letter and a number):'); if (!pw) return;
+        await api(`/api/users/${d.reset}/reset-password`, { method: 'POST', body: { password: pw } }); say('Password reset. The user must choose a new one at next sign-in.'); }
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+  $('#view').onchange = async (e) => {
+    if (!e.target.dataset.role) return;
+    try { await api(`/api/users/${e.target.dataset.role}`, { method: 'PUT', body: { role: e.target.value } }); say('Role updated. The user will be signed out.'); }
+    catch (err) { say(esc(err.message), 'err'); usersView(); }
+  };
+}
 
 // ---- payroll ----
 async function payrollView(period = $('#period')?.value || new Date().toISOString().slice(0, 7)) {
@@ -177,13 +242,17 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
 // ---- sign in ----
 async function start() {
   try { me = await api('/api/me'); } catch (e) { sessionStorage.clear(); return; }
+  if (me.mustChangePassword) tab = 'Account';
   $('#login').style.display = 'none'; $('#app').style.display = 'grid'; show();
 }
 $('#loginForm').onsubmit = async (e) => {
-  e.preventDefault(); sessionStorage.setItem('key', $('#key').value.trim());
-  try { me = await api('/api/me'); $('#loginErr').textContent = ''; start(); } catch (err) { $('#loginErr').textContent = err.message; sessionStorage.clear(); }
+  e.preventDefault();
+  try {
+    const r = await api('/api/auth/login', { method: 'POST', body: { username: $('#user').value, password: $('#key').value } });
+    sessionStorage.setItem('token', r.token); $('#loginErr').textContent = ''; start();
+  } catch (err) { $('#loginErr').textContent = err.message; }
 };
-if (sessionStorage.getItem('key')) start();
+if (sessionStorage.getItem('token')) start();
 </script>
 </body>
 </html>

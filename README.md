@@ -12,9 +12,15 @@ segregation-of-duties approval and locking, payslips, bank CSV and an append-onl
 3. In Vercel choose **Add New > Project**, import the repository and leave the framework preset as **Other**.
 4. Add environment variables (see `.env.example`):
    - `MONGODB_URI`
-   - `USERS` (JSON array of name, key, role). Use long random keys.
+   - `JWT_SECRET` (32+ random characters; see `.env.example` for a one-line generator)
+   - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_NAME` (first administrator only)
    - `HOURS_PER_MONTH` (optional, default 176)
-5. Deploy. The UI is served from `public/`, the API from `api/index.js` at `/api/*`.
+5. Deploy, open the site and sign in with the admin username and password. You will be asked to set a new
+   password. After that, **delete `ADMIN_PASSWORD`** from the Vercel variables and redeploy.
+6. Under **Users**, create accounts for hr, payroll and approver staff. Each person gets a temporary password and
+   must change it at first sign-in.
+
+Deploy details: The UI is served from `public/`, the API from `api/index.js` at `/api/*`.
 
 CLI alternative: `npm i -g vercel && vercel --prod`, then add the variables with `vercel env add`.
 
@@ -38,6 +44,17 @@ npm test               # tax and payroll unit tests (no database needed)
 
 The person who calculates payroll cannot approve it, and creators cannot approve their own loans or adjustments.
 
+## Users and security
+
+- Users live in MongoDB (`users` collection). Passwords are stored only as bcrypt hashes.
+- Sign-in returns a signed token valid for 8 hours. Every request re-checks the user in the database, so
+  deactivating a user, changing a role or resetting a password signs them out immediately.
+- Five wrong passwords lock the account for 15 minutes. Sign-ins, failures, password changes and every user
+  change are written to the audit log.
+- Password rule: at least 10 characters with a letter and a number. Staff can change their own password under Account.
+- The username is the permanent identity used for the approval rules (preparer cannot approve, creator cannot approve).
+- Admins cannot change their own role or status, so the system cannot be left without an administrator.
+
 ## First-run walkthrough
 
 1. Sign in as an `hr` user and add employees (include 10-digit account numbers).
@@ -56,5 +73,5 @@ The person who calculates payroll cannot approve it, and creators cannot approve
 
 Leave management and unpaid-leave deductions, absence detection, part-month proration for joiners and leavers,
 employer levies beyond 10% employer pension, remittance schedules, variance report, CSV attendance import,
-email delivery of payslips, dashboard charts and a database-backed login with password hashing.
-The shared-key login is suitable for a pilot; replace it with proper authentication before wider use.
+email delivery of payslips, dashboard charts and multi-factor authentication.
+Not yet included in login: multi-factor authentication and self-service password reset by email (an admin resets passwords).

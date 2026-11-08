@@ -2,6 +2,17 @@ const mongoose = require('mongoose');
 const { Schema } = mongoose;
 const M = (n, s) => mongoose.models[n] || mongoose.model(n, s);
 
+const User = M('User', new Schema({
+  username: { type: String, required: true, unique: true, lowercase: true, trim: true, match: /^[a-z0-9._-]{3,30}$/ },
+  name: { type: String, required: true, trim: true },
+  role: { type: String, enum: ['admin', 'hr', 'payroll', 'approver'], required: true },
+  passwordHash: { type: String, required: true, select: false },
+  active: { type: Boolean, default: true },
+  mustChangePassword: { type: Boolean, default: true },
+  failedLogins: { type: Number, default: 0 }, lockUntil: Date,
+  tokenVersion: { type: Number, default: 0 }, lastLogin: Date,
+}, { timestamps: true }));
+
 const Employee = M('Employee', new Schema({
   empId: { type: String, required: true, unique: true, trim: true },
   surname: { type: String, required: true }, firstName: { type: String, required: true },
@@ -66,4 +77,4 @@ const auditSchema = new Schema({
   auditSchema.pre(op, function () { throw new Error('Audit log is append-only'); }));
 const Audit = M('Audit', auditSchema);
 
-module.exports = { Employee, Attendance, Loan, Adjustment, PayrollRun, Audit };
+module.exports = { User, Employee, Attendance, Loan, Adjustment, PayrollRun, Audit };
