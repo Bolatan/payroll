@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Payroll</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#edf0f3;--surface:#fff;--ink:#16202a;--muted:#5b6773;--line:#cfd6dd;--accent:#1d6b52;--accent-ink:#fff;--danger:#b3261e;--warn:#8a5a00}
+@media (prefers-color-scheme:dark){:root{--bg:#10161c;--surface:#18212a;--ink:#e6ebf0;--muted:#97a3af;--line:#2c3945;--accent:#4fb38f;--accent-ink:#0b1712;--danger:#ff8a80;--warn:#e6b450}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.4rem .8rem;cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:.4rem .6rem;width:100%}
+#login{max-width:360px;margin:12vh auto;padding:1.5rem;background:var(--surface);border:1px solid var(--line);border-radius:10px}
+#login h1{margin:0 0 .25rem;font-size:1.4rem}
+#app{display:none;grid-template-columns:200px 1fr;min-height:100vh}
+nav{background:var(--ink);color:var(--bg);padding:1.2rem .8rem;display:flex;flex-direction:column;gap:.2rem}
+@media (prefers-color-scheme:dark){nav{background:#0b1015}}
+nav strong{font-size:1.05rem;padding:0 .6rem 1rem}
+nav button{background:none;border:0;color:inherit;text-align:left;border-radius:6px;opacity:.8}
+nav button[aria-current=true]{background:rgba(255,255,255,.14);opacity:1;font-weight:500}
+nav .who{margin-top:auto;font-size:.85rem;opacity:.75;padding:.6rem}
+main{padding:1.5rem;min-width:0}
+h2{margin:0 0 1rem;font-size:1.3rem}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:1rem;margin-bottom:1rem}
+form{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.6rem;align-items:end}
+label{display:flex;flex-direction:column;gap:.2rem;font-size:.85rem;color:var(--muted)}
+label.check{flex-direction:row;align-items:center;gap:.4rem}label.check input{width:auto}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:.45rem .6rem;border-bottom:1px solid var(--line);white-space:nowrap;text-align:left}
+th{font-weight:600;color:var(--muted)}
+td.num,th.num{text-align:right}
+.bar{display:flex;gap:.6rem;flex-wrap:wrap;align-items:end;margin-bottom:1rem}.bar label{width:150px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.6rem;margin-bottom:1rem}
+.stats div{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem}
+.stats b{display:block;font-size:1.15rem;font-variant-numeric:tabular-nums}.stats span{color:var(--muted);font-size:.85rem}
+.msg{padding:.6rem .8rem;border-radius:6px;margin-bottom:1rem;border:1px solid var(--line);background:var(--surface)}
+.msg.err{border-color:var(--danger);color:var(--danger)}.msg.warn{border-color:var(--warn);color:var(--warn)}
+.flag{color:var(--danger);font-weight:500}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);max-width:460px;width:92%}
+dialog table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+@media (max-width:760px){#app{grid-template-columns:1fr}nav{flex-direction:row;flex-wrap:wrap;padding:.6rem}nav strong,nav .who{display:none}}
+@media print{nav,.noprint{display:none!important}#app{display:block}dialog{border:0}}
+</style>
+</head>
+<body>
+<section id="login">
+  <h1>Factory Payroll</h1>
+  <p style="color:var(--muted);margin-top:0">Sign in with your username and password.</p>
+  <form id="loginForm" style="grid-template-columns:1fr">
+    <label>Username<input id="user" autocomplete="username" required></label>
+    <label>Password<input id="key" type="password" autocomplete="current-password" required></label>
+    <button class="primary">Sign in</button>
+  </form>
+  <p id="loginErr" class="flag" role="alert"></p>
+</section>
+
+<div id="app">
+  <nav id="nav"></nav>
+  <main><div id="msg" role="status"></div><div id="view"></div></main>
+</div>
+<dialog id="slip"></dialog>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const money = (n) => (n ?? 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let me = null, tab = 'Payroll';
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (sessionStorage.getItem('token') || '') }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  if (opts.raw) { if (!res.ok) throw new Error((await res.json()).error); return res; }
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== '/api/auth/login') { sessionStorage.clear(); location.reload(); }
+  if (data.code === 'PASSWORD_CHANGE_REQUIRED' && me) { me.mustChangePassword = true; tab = 'Account'; show(); }
+  if (!res.ok) { const e = new Error(data.error || 'Request failed'); e.data = data; throw e; }
+  return data;
+}
+function say(text, kind = '') { $('#msg').innerHTML = text ? `<div class="msg ${kind}">${text}</div>` : ''; }
+
+// ---- screen definitions ----
+const shifts = ['Day', 'Night', 'Weekend', 'Holiday'];
+const SCREENS = {
+  Employees: { path: '/api/employees', roles: ['hr', 'payroll', 'approver'], write: ['hr'], key: 'empId',
+    fields: [['empId', 'Employee ID'], ['surname', 'Surname'], ['firstName', 'First name'], ['department', 'Department'], ['position', 'Position'],
+      ['basic', 'Basic (monthly)', 'number'], ['housing', 'Housing', 'number'], ['transport', 'Transport', 'number'], ['otherAllowance', 'Other allowance', 'number'],
+      ['annualRent', 'Annual rent paid', 'number'], ['bank', 'Bank'], ['accountNo', 'Account no. (10 digits)'], ['state', 'State of residence'], ['nhfEnrolled', 'Enrolled in NHF', 'check']],
+    cols: ['empId', 'surname', 'firstName', 'department', 'basic', 'bank', 'accountNo', 'status'] },
+  Attendance: { path: '/api/attendance', roles: ['payroll', 'approver', 'hr'], write: ['payroll'], approve: ['approver'],
+    fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number']],
+    cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'approved'] },
+  Loans: { path: '/api/loans', roles: ['payroll', 'approver', 'hr'], write: ['payroll', 'hr'], approve: ['approver'],
+    fields: [['empId', 'Employee ID'], ['amount', 'Loan amount', 'number'], ['termMonths', 'Term (months)', 'number'], ['startPeriod', 'First deduction (YYYY-MM)']],
+    cols: ['empId', 'amount', 'termMonths', 'monthly', 'outstanding', 'startPeriod', 'status'], pending: (r) => r.status === 'Pending' },
+  Adjustments: { path: '/api/adjustments', roles: ['payroll', 'approver', 'hr'], write: ['payroll', 'hr'], approve: ['approver'],
+    fields: [['period', 'Period (YYYY-MM)'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['amount', 'Amount', 'number'], ['reason', 'Reason']],
+    cols: ['period', 'empId', 'type', 'amount', 'reason', 'approved'] },
+  Audit: { path: '/api/audit', roles: ['approver'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
+};
+const can = (list) => me.role === 'admin' || list.includes(me.role);
+
+function renderNav() {
+  const items = me.mustChangePassword ? ['Account'] : ['Payroll', ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)), ...(me.role === 'admin' ? ['Users'] : []), 'Account'];
+  $('#nav').innerHTML = `<strong>Factory Payroll</strong>` + items.map((t) => `<button data-t="${t}" ${t === tab ? 'aria-current="true"' : ''}>${t}</button>`).join('') +
+    `<div class="who">${esc(me.name)} (${me.role})<br><button id="out" style="margin-top:.4rem">Sign out</button></div>`;
+  $('#nav').onclick = (e) => { if (e.target.dataset.t) { tab = e.target.dataset.t; say(''); show(); } };
+  $('#out').onclick = () => { sessionStorage.clear(); location.reload(); };
+}
+
+async function show() {
+  renderNav();
+  if (tab === 'Account') return accountView();
+  if (tab === 'Users') return usersView();
+  if (tab === 'Payroll') return payrollView();
+  const s = SCREENS[tab];
+  let rows = [];
+  try { rows = await api(s.path); } catch (e) { return say(esc(e.message), 'err'); }
+  const form = !s.readOnly && can(s.write) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) =>
+    type === 'select' ? `<label>${label}<select name="${k}">${opts.map((o) => `<option>${o}</option>`).join('')}</select></label>`
+    : type === 'check' ? `<label class="check"><input type="checkbox" name="${k}" checked>${label}</label>`
+    : `<label>${label}<input name="${k}" type="${type}" ${type === 'number' ? 'step="any" min="0"' : ''}></label>`).join('') + `<button class="primary">Save</button></form>` : '';
+  const canApprove = s.approve && can(s.approve);
+  $('#view').innerHTML = `<h2>${tab}</h2>${form}<div class="card scroll">${rows.length ? `<table><thead><tr>${s.cols.map((c) => `<th>${c}</th>`).join('')}${canApprove ? '<th></th>' : ''}</tr></thead><tbody>` +
+    rows.map((r) => `<tr>${s.cols.map((c) => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${fmt(c, r[c])}</td>`).join('')}${canApprove ? `<td>${(s.pending ? s.pending(r) : r.approved === false) ? `<button data-id="${r._id}">Approve</button>` : ''}</td>` : ''}</tr>`).join('') + `</tbody></table>` : `<p style="color:var(--muted)">Nothing here yet.${form ? ' Use the form above to add the first record.' : ''}</p>`}</div>`;
+  if (form) $('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    const body = {};
+    s.fields.forEach(([k, , type]) => { const el = e.target.elements[k]; body[k] = type === 'check' ? el.checked : type === 'number' ? (el.value === '' ? undefined : Number(el.value)) : el.value; });
+    try { await api(s.path, { method: 'POST', body }); say('Saved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
+  };
+  if (canApprove) $('#view').onclick = async (e) => {
+    if (!e.target.dataset.id) return;
+    try { await api(`${s.path}/${e.target.dataset.id}/approve`, { method: 'POST' }); say('Approved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
+  };
+}
+const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding)$/.test(c) ? money(v) : /^(date|ts)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
+
+
+// ---- account and users ----
+function accountView() {
+  $('#view').innerHTML = `<h2>Account</h2>${me.mustChangePassword ? '<div class="msg warn">Choose a new password before you continue.</div>' : ''}
+  <form class="card" id="pw" style="max-width:360px;grid-template-columns:1fr"><h3 style="margin:0">Change password</h3>
+    <label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password<input name="next" type="password" autocomplete="new-password" minlength="10" required></label>
+    <label>Confirm new password<input name="again" type="password" autocomplete="new-password" required></label>
+    <p style="margin:0;color:var(--muted);font-size:.85rem">At least 10 characters, with a letter and a number.</p>
+    <button class="primary">Save password</button></form>`;
+  $('#pw').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    if (f.next.value !== f.again.value) return say('The new passwords do not match.', 'err');
+    try {
+      const r = await api('/api/auth/change-password', { method: 'POST', body: { current: f.current.value, next: f.next.value } });
+      sessionStorage.setItem('token', r.token); me.mustChangePassword = false; tab = 'Payroll'; say('Password changed.'); show();
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+}
+
+async function usersView() {
+  let rows = [];
+  try { rows = await api('/api/users'); } catch (e) { return say(esc(e.message), 'err'); }
+  const roles = ['hr', 'payroll', 'approver', 'admin'];
+  $('#view').innerHTML = `<h2>Users</h2>
+  <form class="card" id="uf"><h3 style="grid-column:1/-1;margin:0">Add user</h3>
+    <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,30}"></label>
+    <label>Full name<input name="name" required></label>
+    <label>Role<select name="role">${roles.map((r) => `<option>${r}</option>`).join('')}</select></label>
+    <label>Temporary password<input name="password" required minlength="10"></label>
+    <button class="primary">Create user</button></form>
+  <div class="card scroll"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>` +
+  rows.map((u) => { const self = u._id === me.id; return `<tr><td>${esc(u.username)}</td><td>${esc(u.name)}</td>
+    <td>${self ? u.role : `<select data-role="${u._id}" aria-label="Role for ${esc(u.username)}">${roles.map((r) => `<option ${r === u.role ? 'selected' : ''}>${r}</option>`).join('')}</select>`}</td>
+    <td>${u.active ? 'Active' : 'Deactivated'}${u.lockUntil && new Date(u.lockUntil) > new Date() ? ' (locked)' : ''}</td>
+    <td>${u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-NG') : 'Never'}</td>
+    <td>${self ? 'You' : `<button data-toggle="${u._id}" data-active="${u.active}">${u.active ? 'Deactivate' : 'Reactivate'}</button> <button data-reset="${u._id}">Reset password</button>`}</td></tr>`; }).join('') + '</tbody></table></div>';
+
+  $('#uf').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target.elements;
+    try { await api('/api/users', { method: 'POST', body: { username: f.username.value, name: f.name.value, role: f.role.value, password: f.password.value } });
+      say('User created. Give them the temporary password; they must change it at first sign-in.'); usersView(); } catch (err) { say(esc(err.message), 'err'); }
+  };
+  $('#view').onclick = async (e) => {
+    const d = e.target.dataset;
+    try {
+      if (d.toggle) { await api(`/api/users/${d.toggle}`, { method: 'PUT', body: { active: d.active !== 'true' } }); say('User updated.'); usersView(); }
+      if (d.reset) { const pw = prompt('Enter a temporary password (10+ characters, with a letter and a number):'); if (!pw) return;
+        await api(`/api/users/${d.reset}/reset-password`, { method: 'POST', body: { password: pw } }); say('Password reset. The user must choose a new one at next sign-in.'); }
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+  $('#view').onchange = async (e) => {
+    if (!e.target.dataset.role) return;
+    try { await api(`/api/users/${e.target.dataset.role}`, { method: 'PUT', body: { role: e.target.value } }); say('Role updated. The user will be signed out.'); }
+    catch (err) { say(esc(err.message), 'err'); usersView(); }
+  };
+}
+
+// ---- payroll ----
+async function payrollView(period = $('#period')?.value || new Date().toISOString().slice(0, 7)) {
+  let run = null;
+  try { run = await api(`/api/payroll/${period}`); } catch (e) { /* none yet */ }
+  const t = run?.totals;
+  $('#view').innerHTML = `<h2>Payroll</h2>
+  <div class="bar noprint"><label>Period<input id="period" type="month" value="${period}"></label>
+    ${can(['payroll']) ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
+    ${can(['approver']) && run?.status === 'Draft' ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
+    ${run?.status === 'Approved' && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}</div>
+  ${run ? `<div class="msg ${run.status === 'Approved' ? '' : 'warn'}">${run.status === 'Approved' ? `Approved by ${esc(run.approvedBy)}. This period is locked.` : `Draft prepared by ${esc(run.preparedBy)}. Not yet approved.`}</div>
+  ${run.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}
+  <div class="stats">${[['Employees', t.employees], ['Gross pay', money(t.gross)], ['PAYE', money(t.paye)], ['Pension (employee)', money(t.pension)], ['Net pay', money(t.net)]].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
+  <div class="card scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Dept</th><th class="num">Basic</th><th class="num">OT pay</th><th class="num">Bonus</th><th class="num">Gross</th><th class="num">Pension</th><th class="num">NHF</th><th class="num">PAYE</th><th class="num">Loan</th><th class="num">Other</th><th class="num">Net</th><th></th></tr></thead><tbody>` +
+    run.lines.map((l) => `<tr><td>${esc(l.empId)}</td><td>${esc(l.name)}</td><td>${esc(l.department)}</td>${['basic', 'otPay', 'bonuses', 'gross', 'pension', 'nhf', 'paye', 'loanDeduction', 'otherDeductions', 'netPay'].map((k) => `<td class="num">${money(l[k])}</td>`).join('')}<td>${l.flags.length ? `<span class="flag">${l.flags.join(', ')}</span> ` : ''}<button data-slip="${esc(l.empId)}">Payslip</button></td></tr>`).join('') + '</tbody></table></div>'
+    : `<p style="color:var(--muted)">No payroll for ${period} yet. Choose Calculate payroll to build it from approved attendance, adjustments and active loans.</p>`}`;
+  $('#period').onchange = () => payrollView($('#period').value);
+  $('#calc') && ($('#calc').onclick = async () => { try { await api(`/api/payroll/${$('#period').value}/calculate`, { method: 'POST' }); say('Payroll calculated.'); payrollView($('#period').value); } catch (e) { say(esc(e.message), 'err'); } });
+  $('#appr') && ($('#appr').onclick = async () => {
+    if (!confirm('Approve and lock this period? Loan balances will be updated and it cannot be edited afterwards.')) return;
+    try { await api(`/api/payroll/${period}/approve`, { method: 'POST' }); say('Payroll approved and locked.'); payrollView(period); }
+    catch (e) { say(esc(e.message) + (e.data?.exceptions ? '<br>' + e.data.exceptions.map((x) => `${esc(x.empId)}: ${x.flags.join(', ')}`).join('<br>') : ''), 'err'); }
+  });
+  $('#bank') && ($('#bank').onclick = async () => {
+    try { const r = await api(`/api/payroll/${period}/bank.csv`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
+  });
+  $('#view').onclick = async (e) => {
+    const id = e.target.dataset.slip; if (!id) return;
+    const p = await api(`/api/payroll/${period}/payslip/${id}`);
+    const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
+    $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${p.period}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}${p.status !== 'Approved' ? '<br><b class="flag">Draft, not approved</b>' : ''}</p>
+    <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
+    <p class="noprint" style="display:flex;gap:.5rem"><button onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
+    $('#slip').showModal();
+  };
+}
+
+// ---- sign in ----
+async function start() {
+  try { me = await api('/api/me'); } catch (e) { sessionStorage.clear(); return; }
+  if (me.mustChangePassword) tab = 'Account';
+  $('#login').style.display = 'none'; $('#app').style.display = 'grid'; show();
+}
+$('#loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api('/api/auth/login', { method: 'POST', body: { username: $('#user').value, password: $('#key').value } });
+    sessionStorage.setItem('token', r.token); $('#loginErr').textContent = ''; start();
+  } catch (err) { $('#loginErr').textContent = err.message; }
+};
+if (sessionStorage.getItem('token')) start();
+</script>
+</body>
+</html>
