@@ -236,7 +236,7 @@ def test_us15_ac2_unpaid_leave_deduction():
 
 def test_us04_ac1_mid_period_new_joiner_proration():
     """
-    US-04 AC1:
+    US-04 AC1 & FR-EMP-11:
     Hire date 11th in a 30-day month -> 20 of 30 calendar days.
     Basic ₦150,000 * 20 / 30 = ₦100,000.00.
     """
@@ -247,10 +247,15 @@ def test_us04_ac1_mid_period_new_joiner_proration():
         department="Quality Control",
         position="Lab Chemist",
         hire_date="2026-11-11",
-        basic_salary=Decimal('150000.00')
+        basic_salary=Decimal('150000.00'),
+        bank="First Bank of Nigeria",
+        bank_code="011",
+        account_no="0123456789",
+        employment_type="Permanent"
     )
     res = PayrollCalculator.calculate_employee_payroll(emp, pro_rate_ratio=Decimal('20') / Decimal('30'))
     assert res.basic_salary == Decimal('100000.00')
+    assert emp.hourly_rate == quantize_currency(Decimal('150000.00') / Decimal('176'))
 
 def test_us20_ac4_nhf_not_enrolled():
     """
