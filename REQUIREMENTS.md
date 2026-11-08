@@ -109,8 +109,7 @@ The factory pays a mix of salaried and hourly production staff across day, night
 | BR-14 | The business shall be able to correct prior-period errors via controlled adjustments without altering closed periods. | S | BO-1, BO-4 |
 
 ### 3.3 Scope
-- **In scope:** employee master data; shift configuration; attendance and overtime; loans; leave; bonuses; payroll input consolidation; gross-to-net calculation; statutory deductions (employee pension, NHF, PAYE) and employer contributions; payroll register; payslips; bank transfer schedule; audit log; dashboard and reports; period open/lock/approval; access control.
-- **Out of scope (this release):** recruitment and performance appraisal; full HR self-service portal; general-ledger posting (journal export only); automated direct payment API integration with banks; multi-currency; multi-country payroll; time-clock hardware integration (CSV/Excel import supported instead). `[ASSUMPTION]`
+- **In scope:** employee master data; shift configuration; attendance and overtime; loans; leave; bonuses; payroll input consolidation; gross-to-net calculation; statutory deductions (employee pension, NHF, PAYE) and employer contributions; payroll register; payslips; bank transfer schedule; audit log; dashboard and reports; period open/lock/approval; access control; extended integrations (recruitment & onboarding, appraisals, employee self-service, GL journal posting, direct bank payments, multi-country tax packs, multi-currency, and time-clock biometric punch synchronization per Section 4.17).
 
 ### 3.4 Stakeholders
 | Stakeholder | Role / interest |
@@ -143,10 +142,10 @@ The factory pays a mix of salaried and hourly production staff across day, night
 - **BRL-15:** All monetary amounts are in Nigerian Naira (₦), rounded to 2 decimal places using a single documented rounding rule applied at line level.
 
 ### 3.6 Assumptions and constraints
-- `[ASSUMPTION]` Single legal entity, single payroll currency (NGN), single tax jurisdiction for remittance, with state of residence captured per employee for PAYE remittance.
+- `[ASSUMPTION]` Nigeria is the primary payroll jurisdiction: the Naira (NGN) is the base and reporting currency, and Nigerian rules (NTA 2025 PAYE, pension, NHF) are the default rule set. Additional legal entities, currencies and countries are supported through configurable entities, currencies and country rule packs (Section 4.17). State of residence is still captured per employee for PAYE remittance.
 - `[ASSUMPTION]` The Nigeria Tax Act 2025 (effective 1 January 2026) governs PAYE for all periods from January 2026. Bands and rates are held as reference data and must be confirmed by the Tax Advisor before go-live.
-- `[ASSUMPTION]` Time and attendance data arrive by manual entry or file import; no biometric integration this release.
-- Constraint: If delivered in Excel, formulas must be sheet-protected and the workbook stored on access-controlled storage. Excel cannot enforce true segregation of duties or an immutable audit log; a database-backed application is recommended for those requirements.
+- `[ASSUMPTION]` Time and attendance data arrive by manual entry, file import or direct time-clock and biometric device integration (FR-INT-01 to 03).
+- Constraint: If delivered in Excel, formulas must be sheet-protected and the workbook stored on access-controlled storage. Excel cannot enforce true segregation of duties or an immutable audit log; a database-backed application is required for those requirements and for the self-service portal, bank API, general-ledger and time-clock integrations in Section 4.17.
 
 ### 3.7 Key risks
 | Risk | Likelihood | Impact | Mitigation |
@@ -354,6 +353,18 @@ Monthly: Basic ₦150,000, Housing ₦60,000, Transport ₦40,000 (all pensionab
 | FR-SEC-04 | Salary, bank and tax data shall be visible only to authorised roles; sensitive fields masked elsewhere. | M |
 | FR-SEC-05 | If delivered in Excel: all formula cells and reference sheets shall be locked/protected, inputs restricted via data validation, and the file kept on access-controlled storage with version history. | M |
 | FR-SEC-06 | Personal data shall be processed in line with the Nigeria Data Protection Act 2023 (lawful basis, access control, retention, breach handling). | M |
+
+### 4.17 Extended Integrations and Advanced HR Capabilities
+| ID | Requirement | Pri |
+|---|---|---|
+| FR-INT-01 | The system shall integrate with biometric and time-clock hardware devices to ingest IN/OUT punch timestamps via API or direct push. | S |
+| FR-INT-02 | The system shall automatically pair raw biometric punches into structured daily attendance records, accounting for shifts crossing midnight and weekend/holiday overtime. | S |
+| FR-INT-03 | The system shall support multi-country tax packs (Nigeria NTA 2025, Ghana GRA, Kenya KRA) and multi-currency pay calculations (NGN, GHS, KES, USD) with exchange rates. | S |
+| FR-INT-04 | The system shall generate balanced double-entry General-Ledger (GL) journal postings on payroll approval (debiting wage/pension expenses, crediting payable/net pay liabilities). | S |
+| FR-INT-05 | The system shall support direct bank payment API integration/simulation (e.g., NIBSS Instant Pay) with automated transaction verification and reconciliation. | S |
+| FR-INT-06 | The system shall provide an Employee Self-Service (ESS) portal for viewing personal payslips, profiles, and submitting/tracking leave requests. | S |
+| FR-INT-07 | The system shall support Recruitment & Onboarding pipelines with candidate tracking, offer records, and 1-click conversion to active Employee master records. | S |
+| FR-INT-08 | The system shall support Performance Appraisal cycles, rating evaluations, and direct flow of approved performance bonus recommendations into payroll adjustments. | S |
 
 ---
 
