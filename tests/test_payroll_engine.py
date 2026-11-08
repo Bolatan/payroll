@@ -357,3 +357,74 @@ def test_regression_pack_25_employees_comprehensive():
 
     # Overall batch reconciliation (DoD-4, FR-PAY-09)
     assert total_gross - total_deductions == total_net
+
+def test_fr_att_attendance_processing_and_summaries():
+    """
+    FR-ATT-01 through FR-ATT-12: Attendance processing, hours worked, OT categorization,
+    highest multiplier, lateness detection, and period summaries.
+    """
+    # 1. Day shift with overtime
+    r1 = PayrollCalculator.process_attendance_record(
+        emp_id="EMP001",
+        date_str="2026-11-02",
+        shift=ShiftType.DAY,
+        clock_in="08:00",
+        clock_out="18:00",
+        break_hours=Decimal('0.0')
+    )
+    assert r1.hours_worked == Decimal('10.00')
+    assert r1.ot_hours == Decimal('2.00')
+    assert r1.applied_multiplier == Decimal('1.5')
+    assert not r1.is_late
+    assert not r1.is_early_departure
+
+    # 2. Night shift crossing midnight
+    r2 = PayrollCalculator.process_attendance_record(
+        emp_id="EMP001",
+        date_str="2026-11-03",
+        shift=ShiftType.NIGHT,
+        clock_in="22:00",
+        clock_out="06:00",
+        break_hours=Decimal('0.0')
+    )
+    assert r2.hours_worked == Decimal('8.00')
+    assert r2.applied_multiplier == Decimal('1.75')
+
+    # 3. Weekend shift (all hours WeekendOT)
+    r3 = PayrollCalculator.process_attendance_record(
+        emp_id="EMP001",
+        date_str="2026-11-07",
+        shift=ShiftType.WEEKEND,
+        clock_in="08:00",
+        clock_out="16:00"
+    )
+    assert r3.weekend_ot == Decimal('8.00')
+    assert r3.applied_multiplier == Decimal('2.0')
+
+    # 4. Night shift on public holiday (FR-ATT-07: highest multiplier = 2.5)
+    r4 = PayrollCalculator.process_attendance_record(
+        emp_id="EMP001",
+        date_str="2026-11-10",
+        shift=ShiftType.NIGHT,
+        clock_in="20:00",
+        clock_out="04:00",
+        is_public_holiday=True
+    )
+    assert r4.holiday_ot == Decimal('8.00')
+    assert r4.applied_multiplier == Decimal('2.5')
+
+    # 5. Period Attendance Summary (FR-ATT-12)
+    summary = PayrollCalculator.summarize_attendance(
+        emp_id="EMP001",
+        records=[r1, r2, r3, r4],
+        approved_leave_days=1
+    )
+    assert summary.days_present == 4
+    assert summary.days_absent == 0
+    assert summary.days_leave == 1
+    assert summary.total_hours == Decimal('34.00')
+    assert summary.day_ot_hours == Decimal('2.00')
+    assert summary.weekend_ot_hours == Decimal('8.00')
+    assert summary.holiday_ot_hours == Decimal('8.00')
+    assert summary.total_ot_hours == Decimal('18.00')
+    assert not summary.ot_capped_warning

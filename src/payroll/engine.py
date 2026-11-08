@@ -79,12 +79,39 @@ class AttendanceRecord:
     date: str
     emp_id: str
     shift: ShiftType
-    hours_worked: Decimal
+    hours_worked: Decimal = Decimal('0.0')
     ot_hours: Decimal = Decimal('0.0')
     weekend_ot: Decimal = Decimal('0.0')
     holiday_ot: Decimal = Decimal('0.0')
+    applied_multiplier: Decimal = Decimal('1.0')
     absent: bool = False
+    absent_reason: str = ""
+    clock_in: str = "08:00"
+    clock_out: str = "16:00"
+    break_hours: Decimal = Decimal('0.0')
+    late_minutes: int = 0
+    early_minutes: int = 0
+    is_late: bool = False
+    is_early_departure: bool = False
     approved: bool = True
+    approved_by: Optional[str] = None
+    created_by: Optional[str] = None
+
+@dataclass
+class AttendancePeriodSummary:
+    emp_id: str
+    days_present: int
+    days_absent: int
+    days_leave: int
+    total_hours: Decimal
+    day_ot_hours: Decimal
+    night_ot_hours: Decimal
+    weekend_ot_hours: Decimal
+    holiday_ot_hours: Decimal
+    total_ot_hours: Decimal
+    late_count: int
+    early_departure_count: int
+    ot_capped_warning: bool = False
 
 @dataclass
 class Loan:
@@ -130,6 +157,159 @@ class PayrollCalculator:
     """
     Computes payroll according to Nigeria Tax Act 2025 and Nigerian Statutory Regulations.
     """
+    @staticmethod
+    def calculate_hours_worked(clock_in: str, clock_out: str, break_hours: Decimal = Decimal('0.0')) -> Decimal:
+        """FR-ATT-04: HoursWorked = ClockOut - ClockIn - unpaid break, handles night shifts crossing midnight."""
+        cin_h, cin_m = map(int, clock_in.split(':'))
+        cout_h, cout_m = map(int, clock_out.split(':'))
+        mins = (cout_h * 60 + cout_m) - (cin_h * 60 + cin_m)
+        if mins <= 0:
+            mins += 1440  # crossing midnight
+        worked = Decimal(str(mins)) / Decimal('60') - break_hours
+        return quantize_currency(max(Decimal('0.00'), worked))
+
+    @staticmethod
+    def resolve_highest_multiplier(
+        shift: ShiftType,
+        is_public_holiday: bool = False,
+        is_weekend: bool = False,
+        shift_rules: Dict[ShiftType, ShiftRule] = DEFAULT_SHIFT_RULES
+    ) -> Decimal:
+        """
+        FR-ATT-07: Apply highest applicable multiplier, not compound them.
+        """
+        candidates = [shift_rules[shift].multiplier]
+        if is_weekend:
+            candidates.append(shift_rules[ShiftType.WEEKEND].multiplier)
+        if is_public_holiday:
+            candidates.append(shift_rules[ShiftType.HOLIDAY].multiplier)
+        return max(candidates)
+
+    @classmethod
+    def process_attendance_record(
+        cls,
+        emp_id: str,
+        date_str: str,
+        shift: ShiftType,
+        clock_in: str,
+        clock_out: str,
+        break_hours: Decimal = Decimal('0.0'),
+        is_public_holiday: bool = False,
+        is_weekend: bool = False,
+        shift_rules: Dict[ShiftType, ShiftRule] = DEFAULT_SHIFT_RULES
+    ) -> AttendanceRecord:
+        """
+        Processes raw punch times into structured attendance record with OT categories.
+        FR-ATT-01, FR-ATT-04, FR-ATT-05, FR-ATT-06, FR-ATT-07, FR-ATT-11
+        """
+        hours = cls.calculate_hours_worked(clock_in, clock_out, break_hours)
+        multiplier = cls.resolve_highest_multiplier(shift, is_public_holiday, is_weekend, shift_rules)
+
+        std_hours = shift_rules[shift].std_hours
+        ot_hours = Decimal('0.0')
+        weekend_ot = Decimal('0.0')
+        holiday_ot = Decimal('0.0')
+
+        if shift == ShiftType.HOLIDAY or is_public_holiday:
+            holiday_ot = hours
+        elif shift == ShiftType.WEEKEND or is_weekend:
+            weekend_ot = hours
+        else:
+            if hours > std_hours:
+                ot_hours = hours - std_hours
+
+        # Lateness / early departure thresholds
+        in_h, in_m = map(int, clock_in.split(':'))
+        in_mins = in_h * 60 + in_m
+        late_mins = max(0, in_mins - (8 * 60))
+        is_late = late_mins >= 15
+
+        out_h, out_m = map(int, clock_out.split(':'))
+        out_mins = out_h * 60 + out_m
+        if out_mins < in_mins:
+            out_mins += 1440
+        sched_end = 16 * 60
+        early_mins = max(0, sched_end - out_mins) if out_mins < sched_end else 0
+        is_early = early_mins >= 15
+
+        return AttendanceRecord(
+            date=date_str,
+            emp_id=emp_id,
+            shift=shift,
+            hours_worked=hours,
+            ot_hours=quantize_currency(ot_hours),
+            weekend_ot=quantize_currency(weekend_ot),
+            holiday_ot=quantize_currency(holiday_ot),
+            applied_multiplier=multiplier,
+            absent=False,
+            clock_in=clock_in,
+            clock_out=clock_out,
+            break_hours=break_hours,
+            late_minutes=late_mins,
+            early_minutes=early_mins,
+            is_late=is_late,
+            is_early_departure=is_early,
+            approved=True
+        )
+
+    @staticmethod
+    def summarize_attendance(
+        emp_id: str,
+        records: List[AttendanceRecord],
+        approved_leave_days: int = 0,
+        max_period_ot: Decimal = Decimal('40.0')
+    ) -> AttendancePeriodSummary:
+        """
+        FR-ATT-12: Produces period attendance summary per employee.
+        """
+        days_present = 0
+        days_absent = 0
+        total_hours = Decimal('0.0')
+        day_ot = Decimal('0.0')
+        night_ot = Decimal('0.0')
+        weekend_ot = Decimal('0.0')
+        holiday_ot = Decimal('0.0')
+        late_count = 0
+        early_count = 0
+
+        for r in records:
+            if r.absent:
+                days_absent += 1
+            else:
+                days_present += 1
+                total_hours += r.hours_worked
+                if r.is_late:
+                    late_count += 1
+                if r.is_early_departure:
+                    early_count += 1
+
+                if r.holiday_ot > Decimal('0.0'):
+                    holiday_ot += r.holiday_ot
+                elif r.weekend_ot > Decimal('0.0') or r.shift == ShiftType.WEEKEND:
+                    weekend_ot += r.weekend_ot if r.weekend_ot > Decimal('0.0') else r.hours_worked
+                elif r.shift == ShiftType.NIGHT:
+                    night_ot += r.ot_hours
+                else:
+                    day_ot += r.ot_hours
+
+        total_ot = quantize_currency(day_ot + night_ot + weekend_ot + holiday_ot)
+
+        return AttendancePeriodSummary(
+            emp_id=emp_id,
+            days_present=days_present,
+            days_absent=days_absent,
+            days_leave=approved_leave_days,
+            total_hours=quantize_currency(total_hours),
+            day_ot_hours=quantize_currency(day_ot),
+            night_ot_hours=quantize_currency(night_ot),
+            weekend_ot_hours=quantize_currency(weekend_ot),
+            holiday_ot_hours=quantize_currency(holiday_ot),
+            total_ot_hours=total_ot,
+            late_count=late_count,
+            early_departure_count=early_count,
+            ot_capped_warning=total_ot > max_period_ot
+        )
+
     @staticmethod
     def calculate_ot_pay(
         hourly_rate: Decimal,
