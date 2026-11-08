@@ -19,6 +19,8 @@ from src.payroll.engine import (
     Loan,
     PayrollCalculator,
     ShiftType,
+    ShiftRule,
+    PublicHoliday,
     EmployeeStatus,
     quantize_currency
 )
@@ -357,3 +359,44 @@ def test_regression_pack_25_employees_comprehensive():
 
     # Overall batch reconciliation (DoD-4, FR-PAY-09)
     assert total_gross - total_deductions == total_net
+
+def test_fr_shf_01_and_fr_shf_05_shift_validation_and_custom_shifts():
+    """
+    FR-SHF-01: Maintains shift types (Day, Night, Weekend, Holiday and user-defined)
+    FR-SHF-02: Configurable start/end times (crossing midnight), break duration, effectiveFrom
+    FR-SHF-05: Validates multiplier >= 1.0 and standard hours between 1 and 24
+    """
+    # Valid standard and user-defined shifts
+    day_shift = ShiftRule(shift="Day", std_hours=Decimal('8.0'), multiplier=Decimal('1.5'), start_time="08:00", end_time="16:00", break_duration=Decimal('1.0'), effective_from="2026-01-01")
+    night_shift = ShiftRule(shift="Night", std_hours=Decimal('8.0'), multiplier=Decimal('1.75'), start_time="22:00", end_time="06:00", break_duration=Decimal('1.0'), effective_from="2026-01-01")
+    custom_shift = ShiftRule(shift="SpecialOperations", std_hours=Decimal('10.0'), multiplier=Decimal('2.25'), start_time="06:00", end_time="17:00", break_duration=Decimal('1.0'), effective_from="2026-06-01")
+
+    assert day_shift.multiplier == Decimal('1.5')
+    assert night_shift.multiplier == Decimal('1.75')
+    assert custom_shift.std_hours == Decimal('10.0')
+
+    # Multiplier < 1.0 must be rejected
+    with pytest.raises(ValueError, match="Shift multiplier must be >= 1.0"):
+        ShiftRule(shift="InvalidMult", std_hours=Decimal('8.0'), multiplier=Decimal('0.8'))
+
+    # Standard hours < 1 or > 24 must be rejected
+    with pytest.raises(ValueError, match="Standard hours must be between 1 and 24"):
+        ShiftRule(shift="ZeroHours", std_hours=Decimal('0.5'), multiplier=Decimal('1.5'))
+
+    with pytest.raises(ValueError, match="Standard hours must be between 1 and 24"):
+        ShiftRule(shift="ExcessHours", std_hours=Decimal('25.0'), multiplier=Decimal('1.5'))
+
+def test_fr_shf_04_public_holiday_calendar():
+    """
+    FR-SHF-04: The system shall maintain a public-holiday calendar (date, name).
+    """
+    holidays = [
+        PublicHoliday(date="2026-01-01", name="New Year's Day"),
+        PublicHoliday(date="2026-05-01", name="Workers' Day"),
+        PublicHoliday(date="2026-10-01", name="Independence Day"),
+        PublicHoliday(date="2026-12-25", name="Christmas Day"),
+    ]
+    assert len(holidays) == 4
+    holiday_dates = {h.date: h.name for h in holidays}
+    assert "2026-12-25" in holiday_dates
+    assert holiday_dates["2026-05-01"] == "Workers' Day"

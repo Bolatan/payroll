@@ -116,6 +116,12 @@ const SCREENS = {
   Leaves: { path: '/api/ess/leaves', roles: ['hr', 'approver', 'employee'], write: ['hr', 'employee'], approve: ['approver', 'hr'],
     fields: [['empId', 'Employee ID'], ['leaveType', 'Leave Type', 'select', ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Unpaid']], ['startDate', 'Start Date', 'date'], ['endDate', 'End Date', 'date'], ['days', 'Days', 'number'], ['reason', 'Reason']],
     cols: ['empId', 'leaveType', 'startDate', 'endDate', 'days', 'status', 'approvedBy'], pending: (r) => r.status === 'Pending' },
+  'Shift Setup': { path: '/api/shifts', roles: ['hr', 'payroll', 'approver', 'admin'], write: ['hr', 'payroll', 'admin'],
+    fields: [['name', 'Shift Name'], ['stdHours', 'Standard Hours (1-24)', 'number'], ['otMultiplier', 'OT Multiplier (>= 1.0)', 'number'], ['startTime', 'Start Time (HH:MM)'], ['endTime', 'End Time (HH:MM)'], ['breakDuration', 'Break Duration (hours)', 'number'], ['effectiveFrom', 'Effective Date', 'date'], ['description', 'Description']],
+    cols: ['name', 'stdHours', 'otMultiplier', 'startTime', 'endTime', 'breakDuration', 'effectiveFrom', 'description'] },
+  'Holidays': { path: '/api/holidays', roles: ['hr', 'payroll', 'approver', 'admin'], write: ['hr', 'payroll', 'admin'],
+    fields: [['date', 'Holiday Date', 'date'], ['name', 'Holiday Name']],
+    cols: ['date', 'name', 'createdBy'] },
   'General Ledger': { path: '/api/gl/journals', roles: ['payroll', 'approver', 'admin'], readOnly: true,
     cols: ['journalNumber', 'period', 'postDate', 'totalDebit', 'totalCredit', 'status', 'postedBy'] },
   'Bank Payments': { path: '/api/payments/batches', roles: ['payroll', 'approver'], readOnly: true,
@@ -194,7 +200,7 @@ async function show() {
   };
 }
 
-const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding|offeredSalary|totalAmount|totalDebit|totalCredit)$/.test(c) ? money(v) : /^(date|ts|timestamp|postDate|startDate|endDate)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
+const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding|offeredSalary|totalAmount|totalDebit|totalCredit)$/.test(c) ? money(v) : /^(date|ts|timestamp|postDate|startDate|endDate|effectiveFrom)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
 
 // ---- Employee Self-Service (ESS) View ----
 async function essView() {
