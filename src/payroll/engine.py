@@ -25,15 +25,35 @@ class ShiftType(str, Enum):
 
 @dataclass
 class ShiftRule:
-    shift: ShiftType
+    shift: str  # Allows standard ShiftType or user-defined string (FR-SHF-01)
     std_hours: Decimal = Decimal('8.0')
     multiplier: Decimal = Decimal('1.5')
+    start_time: str = "08:00"  # FR-SHF-02
+    end_time: str = "16:00"    # FR-SHF-02 (supports night shifts crossing midnight)
+    break_duration: Decimal = Decimal('1.0')  # FR-SHF-02
+    effective_from: str = "2026-01-01"  # FR-SHF-02
 
-DEFAULT_SHIFT_RULES: Dict[ShiftType, ShiftRule] = {
-    ShiftType.DAY: ShiftRule(ShiftType.DAY, Decimal('8.0'), Decimal('1.5')),
-    ShiftType.NIGHT: ShiftRule(ShiftType.NIGHT, Decimal('8.0'), Decimal('1.75')),
-    ShiftType.WEEKEND: ShiftRule(ShiftType.WEEKEND, Decimal('8.0'), Decimal('2.0')),
-    ShiftType.HOLIDAY: ShiftRule(ShiftType.HOLIDAY, Decimal('8.0'), Decimal('2.5')),
+    def __post_init__(self):
+        # FR-SHF-05: Shift multipliers validated as >= 1.0 and standard hours between 1 and 24
+        self.std_hours = Decimal(str(self.std_hours))
+        self.multiplier = Decimal(str(self.multiplier))
+        self.break_duration = Decimal(str(self.break_duration))
+        if self.multiplier < Decimal('1.0'):
+            raise ValueError(f"Shift multiplier must be >= 1.0, got {self.multiplier}")
+        if self.std_hours < Decimal('1.0') or self.std_hours > Decimal('24.0'):
+            raise ValueError(f"Standard hours must be between 1 and 24, got {self.std_hours}")
+
+@dataclass
+class PublicHoliday:
+    """FR-SHF-04: Public-holiday calendar (date, name)."""
+    date: str  # YYYY-MM-DD
+    name: str
+
+DEFAULT_SHIFT_RULES: Dict[str, ShiftRule] = {
+    ShiftType.DAY: ShiftRule(ShiftType.DAY, Decimal('8.0'), Decimal('1.5'), start_time="08:00", end_time="16:00"),
+    ShiftType.NIGHT: ShiftRule(ShiftType.NIGHT, Decimal('8.0'), Decimal('1.75'), start_time="22:00", end_time="06:00"),
+    ShiftType.WEEKEND: ShiftRule(ShiftType.WEEKEND, Decimal('8.0'), Decimal('2.0'), start_time="08:00", end_time="16:00"),
+    ShiftType.HOLIDAY: ShiftRule(ShiftType.HOLIDAY, Decimal('8.0'), Decimal('2.5'), start_time="08:00", end_time="16:00"),
 }
 
 @dataclass

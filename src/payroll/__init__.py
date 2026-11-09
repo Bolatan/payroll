@@ -3,6 +3,8 @@ from src.payroll.engine import (
     Loan,
     PayrollCalculator,
     ShiftType,
+    ShiftRule,
+    PublicHoliday,
     EmployeeStatus,
     DEFAULT_SHIFT_RULES,
     quantize_currency
@@ -13,6 +15,8 @@ __all__ = [
     "Loan",
     "PayrollCalculator",
     "ShiftType",
+    "ShiftRule",
+    "PublicHoliday",
     "EmployeeStatus",
     "DEFAULT_SHIFT_RULES",
     "quantize_currency"
