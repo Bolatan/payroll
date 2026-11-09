@@ -90,6 +90,35 @@ The factory pays a mix of salaried and hourly production staff across day, night
 | BO-5 | Provide management visibility of payroll cost | Dashboard available at period close with department-level breakdown |
 | BO-6 | Reduce payment errors and fraud | Bank file generated from approved payroll only; zero unauthorised changes post-approval |
 
+### 3.2.2 Success Criteria
+The project is successful when the criteria below are met. Each is measurable and linked to a business objective in Section 3.2. Targets are provisional until baselines are agreed: the current time to close payroll, errors per cycle and manually keyed inputs shall be recorded in the month before go-live.
+
+#### Core payroll
+| ID | Success criterion | Target | How it is measured | When | Objective |
+|---|---|---|---|---|---|
+| SC-01 | Payroll accuracy | At least 99.5% of payslips need no correction; no overpayment or underpayment above ₦5,000 goes unnoticed before payment | Corrections logged ÷ payslips issued, from the payroll error log | Every period, for 3 consecutive periods after go-live | BO-1 |
+| SC-02 | Parallel-run reconciliation | Every variance against the old process is explained and signed off; no unexplained net-pay difference above ₦1 | Variance report signed by Finance | Two full parallel cycles before go-live | BO-1 |
+| SC-03 | Processing time | Payroll approved within 3 working days of period end, and prepared within 1 working day after inputs are frozen | Period timeline in the system | Every period | BO-1 |
+| SC-04 | Tax and statutory correctness | 100% of the reference-employee regression pack matches independently calculated PAYE, pension and NHF to the kobo, with written Tax Advisor sign-off | Regression pack results (DoD-2, DoD-7) | Before go-live and after every rule change | BO-2 |
+| SC-05 | Statutory remittance on time | 100% of PAYE, pension and NHF remittances made by their due dates; no penalties | Remittance tracker (FR-STAT-04) | Every period | BO-2 |
+| SC-06 | Less manual work | At least 80% fewer manually keyed payroll inputs than the baseline | Count of manual entries before and after | Month 3 after go-live | BO-3 |
+| SC-07 | Controls work | 100% of pay-affecting changes appear in the audit log; no payroll approved by the person who prepared it; no change accepted in a locked period | Control tests and internal audit review | Before go-live, then quarterly | BO-4 |
+| SC-08 | Payment integrity | Bank file total and count equal the approved register every period; no misdirected payments; failed payments re-paid within 2 working days | Bank reconciliation report | Every period | BO-6 |
+| SC-09 | Payslips on time | 100% of payslips available on or before pay date, matching the register exactly | Distribution log and reconciliation | Every period | BO-1 |
+| SC-10 | Management visibility | Dashboard and employer cost report available at approval and reconcile 100% to the register | Reconciliation check (FR-DSH-04) | Every period | BO-5 |
+| SC-11 | Team independence | The payroll team completes a full monthly cycle without developer help and rates the system at least 4 out of 5 | Observed cycle and user survey | Month 3 after go-live | BO-3 |
+| SC-12 | Availability and recovery | At least 99.5% availability in processing windows; a backup restore test passes | Monitoring and restore test records (NFR-AVL-01, NFR-BAK-01) | Monthly and quarterly | BO-1, BO-6 |
+
+#### Extended capabilities (measured when each is delivered)
+| ID | Success criterion | Target | How it is measured | When | Objective |
+|---|---|---|---|---|---|
+| SC-13 | General-ledger posting | Every approved period has a balanced journal posted within 1 working day; no unmapped pay elements; no double postings | GL reconciliation report (FR-GL-06) | Every period | BO-5 |
+| SC-14 | Bank payment integration | No duplicate payments; dual authorisation on 100% of batches; at least 99% of payments reach Paid on first submission | Bank status reports and audit log | Every period | BO-6 |
+| SC-15 | Employee self-service | At least 80% of eligible employees have activated accounts, and payslip queries to the payroll team fall by at least 50% | Account activation and query log | Month 3 after portal launch | BO-3 |
+| SC-16 | Time-clock integration | At least 98% of punches become attendance entries without manual correction; every device silent for more than the set period is alerted | Import and exceptions reports | Month 2 after launch | BO-3 |
+| SC-17 | Multi-currency and multi-country | Foreign-currency payslips match the locked rate in 100% of cases; each entity runs under its own rule pack; access tests show no cross-entity data exposure | Reconciliation and access tests | Before each entity or currency goes live | BO-2, BO-4 |
+| SC-18 | Recruitment and appraisal | At least 90% of new hires have a complete onboarding checklist before the first payroll cut-off; 100% of appraisal-based bonuses and increments pass through approval | Onboarding checklist audit and appraisal-to-payroll reconciliation report | First cycle following module launch | BO-1, BO-3 |
+
 ### 3.2.1 Business requirements
 | ID | Business Requirement | Priority | Objective |
 |---|---|---|---|
