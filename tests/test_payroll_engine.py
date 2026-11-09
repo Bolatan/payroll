@@ -17,6 +17,7 @@ from decimal import Decimal
 from src.payroll.engine import (
     Employee,
     Loan,
+    AttendanceRecord,
     PayrollCalculator,
     ShiftType,
     EmployeeStatus,
@@ -362,3 +363,48 @@ def test_regression_pack_25_employees_comprehensive():
 
     # Overall batch reconciliation (DoD-4, FR-PAY-09)
     assert total_gross - total_deductions == total_net
+
+def test_fr_att_attendance_evaluation_and_night_shift():
+    """
+    FR-ATT-04, FR-ATT-05, FR-ATT-06, FR-ATT-07:
+    Verify Attendance evaluation on night shift crossing midnight and holiday highest multiplier.
+    """
+    # Night shift 22:00 to 06:00 (8h) with 1h break = 7h
+    night_record = AttendanceRecord(
+        date="2026-11-02",
+        emp_id="EMP001",
+        shift=ShiftType.NIGHT,
+        clock_in="22:00",
+        clock_out="06:00",
+        break_hours=Decimal('1.0')
+    )
+    evaluated_night = PayrollCalculator.evaluate_attendance_entry(night_record)
+    assert evaluated_night.hours_worked == Decimal('7.00')
+    assert evaluated_night.ot_hours == Decimal('0.00')
+
+    # Night shift on holiday: highest multiplier applies (2.5 vs 1.75)
+    holiday_night = AttendanceRecord(
+        date="2026-11-03",
+        emp_id="EMP001",
+        shift=ShiftType.NIGHT,
+        clock_in="20:00",
+        clock_out="04:00",
+        break_hours=Decimal('0.0')
+    )
+    evaluated_overlap = PayrollCalculator.evaluate_attendance_entry(holiday_night, is_holiday=True)
+    assert evaluated_overlap.multiplier == Decimal('2.5')
+    assert evaluated_overlap.holiday_ot == Decimal('8.00')
+
+    # Overtime exceeding daily cap of 4h
+    long_day = AttendanceRecord(
+        date="2026-11-04",
+        emp_id="EMP001",
+        shift=ShiftType.DAY,
+        clock_in="06:00",
+        clock_out="20:00",
+        break_hours=Decimal('0.0')
+    )
+    evaluated_long = PayrollCalculator.evaluate_attendance_entry(long_day, max_daily_ot=Decimal('4.0'))
+    assert evaluated_long.hours_worked == Decimal('14.00')
+    assert evaluated_long.ot_hours == Decimal('6.00')
+    assert evaluated_long.ot_exceeded_warning is not None

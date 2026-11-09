@@ -109,8 +109,8 @@ const SCREENS = {
       ['status', 'Status', 'select', empStatuses]],
     cols: ['empId', 'surname', 'firstName', 'department', 'position', 'employmentType', 'basic', 'hourlyRate', 'bank', 'accountNo', 'status'] },
   Attendance: { path: '/api/attendance', roles: ['payroll', 'approver', 'hr'], write: ['payroll'], approve: ['approver'],
-    fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number']],
-    cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'source', 'approved'] },
+    fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number'], ['absent', 'Mark Absent', 'check']],
+    cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'otHours', 'weekendOT', 'holidayOT', 'multiplier', 'absent', 'lateMinutes', 'approved'] },
   Loans: { path: '/api/loans', roles: ['payroll', 'approver', 'hr'], write: ['payroll', 'hr'], approve: ['approver'],
     fields: [['empId', 'Employee ID'], ['amount', 'Loan amount', 'number'], ['termMonths', 'Term (months)', 'number'], ['startPeriod', 'First deduction (YYYY-MM)']],
     cols: ['empId', 'amount', 'termMonths', 'monthly', 'outstanding', 'startPeriod', 'status'], pending: (r) => r.status === 'Pending' },
@@ -177,6 +177,19 @@ async function show() {
       <div style="margin-top:.6rem"><button id="doImport" class="primary">Execute Import</button> <button id="cancelImport">Cancel</button></div>
       <div id="importResult" style="margin-top:.6rem"></div>
     </div>`;
+  } else if (tab === 'Attendance') {
+    extraActions = `<div class="bar noprint">
+      ${can(['payroll']) ? '<button id="bulkImportAttBtn">Bulk Import Attendance</button>' : ''}
+      ${can(['payroll', 'approver']) ? '<button id="autoAbsentBtn">Trigger Auto-Absent Check</button>' : ''}
+      <button id="viewExceptionsBtn">View Overtime Exceptions</button>
+    </div>
+    <div id="attImportArea" class="card" style="display:none">
+      <h3>Bulk Import Attendance</h3>
+      <p style="color:var(--muted);font-size:.85rem">Paste a JSON array of attendance entries (Date, EmpID, Shift, ClockIn, ClockOut, etc.).</p>
+      <textarea id="attImportPayload" rows="6" placeholder='[{"empId":"EMP0001","date":"2026-11-02","shift":"Day","clockIn":"08:00","clockOut":"17:00","breakHours":1}]'></textarea>
+      <div style="margin-top:.6rem"><button id="doAttImport" class="primary">Execute Import</button> <button id="cancelAttImport">Cancel</button></div>
+      <div id="attImportResult" style="margin-top:.6rem"></div>
+    </div>`;
   }
 
   const form = !s.readOnly && can(s.write) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) =>
@@ -216,6 +229,47 @@ async function show() {
         a.href = URL.createObjectURL(await r.blob());
         a.download = `employees-${new Date().toISOString().slice(0, 10)}.csv`;
         a.click();
+      } catch (err) { say(esc(err.message), 'err'); }
+    };
+  }
+
+  if ($('#bulkImportAttBtn')) {
+    $('#bulkImportAttBtn').onclick = () => {
+      const el = $('#attImportArea');
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    };
+    $('#cancelAttImport').onclick = () => { $('#attImportArea').style.display = 'none'; };
+    $('#doAttImport').onclick = async () => {
+      const raw = $('#attImportPayload').value.trim();
+      if (!raw) return say('Please paste JSON attendance entries.', 'warn');
+      try {
+        const data = JSON.parse(raw);
+        const res = await api('/api/attendance/bulk-import', { method: 'POST', body: data });
+        say(`Attendance import complete: ${res.imported} succeeded, ${res.failed} failed.`);
+        $('#attImportResult').innerHTML = `<p><b>Total:</b> ${res.total} | <b>Imported:</b> ${res.imported} | <b>Failed:</b> ${res.failed}</p>` +
+          (res.report.length ? `<ul>${res.report.map((r) => `<li>Row ${r.row} (${esc(r.empId)}): ${esc(r.status)} ${r.errors ? '- ' + esc(r.errors.join(', ')) : ''}</li>`).join('')}</ul>` : '');
+        setTimeout(show, 2000);
+      } catch (err) { say(esc(err.message), 'err'); }
+    };
+  }
+
+  if ($('#autoAbsentBtn')) {
+    $('#autoAbsentBtn').onclick = async () => {
+      const dateStr = prompt('Enter date to check auto-absence (YYYY-MM-DD):', new Date().toISOString().slice(0, 10));
+      if (!dateStr) return;
+      try {
+        const res = await api('/api/attendance/auto-absent', { method: 'POST', body: { date: dateStr } });
+        say(res.message);
+        show();
+      } catch (err) { say(esc(err.message), 'err'); }
+    };
+  }
+
+  if ($('#viewExceptionsBtn')) {
+    $('#viewExceptionsBtn').onclick = async () => {
+      try {
+        const ex = await api('/api/attendance/exceptions');
+        alert(`Attendance Exceptions:\nUnapproved Overtime: ${ex.totalUnapprovedOT} records\nOvertime Cap Exceeded: ${ex.totalCapExceeded} records`);
       } catch (err) { say(esc(err.message), 'err'); }
     };
   }

@@ -115,12 +115,31 @@ class AttendanceRecord:
     date: str
     emp_id: str
     shift: ShiftType
-    hours_worked: Decimal
+    hours_worked: Decimal = Decimal('0.0')
+    clock_in: Optional[str] = None
+    clock_out: Optional[str] = None
+    break_hours: Decimal = Decimal('0.0')
     ot_hours: Decimal = Decimal('0.0')
     weekend_ot: Decimal = Decimal('0.0')
     holiday_ot: Decimal = Decimal('0.0')
+    multiplier: Decimal = Decimal('1.0')
     absent: bool = False
+    absent_reason: Optional[str] = None
+    supervisor_override_reason: Optional[str] = None
+    late_minutes: int = 0
+    early_departure_minutes: int = 0
+    ot_exceeded_warning: Optional[str] = None
     approved: bool = True
+    approved_by: Optional[str] = None
+    created_by: Optional[str] = None
+
+    def __post_init__(self):
+        self.hours_worked = quantize_currency(Decimal(str(self.hours_worked)))
+        self.ot_hours = quantize_currency(Decimal(str(self.ot_hours)))
+        self.weekend_ot = quantize_currency(Decimal(str(self.weekend_ot)))
+        self.holiday_ot = quantize_currency(Decimal(str(self.holiday_ot)))
+        self.break_hours = Decimal(str(self.break_hours))
+        self.multiplier = Decimal(str(self.multiplier))
 
 @dataclass
 class Loan:
@@ -166,6 +185,78 @@ class PayrollCalculator:
     """
     Computes payroll according to Nigeria Tax Act 2025 and Nigerian Statutory Regulations.
     """
+    @staticmethod
+    def calculate_hours_worked(clock_in: str, clock_out: str, break_hours: Decimal = Decimal('0.0')) -> Decimal:
+        """
+        FR-ATT-04: (ClockOut - ClockIn - unpaid break), handling night shifts that cross midnight.
+        """
+        in_parts = [int(p) for p in clock_in.split(':')]
+        out_parts = [int(p) for p in clock_out.split(':')]
+        in_mins = in_parts[0] * 60 + in_parts[1]
+        out_mins = out_parts[0] * 60 + out_parts[1]
+        mins = out_mins - in_mins
+        if mins <= 0:
+            mins += 1440
+        worked_hours = max(Decimal('0.0'), Decimal(str(mins)) / Decimal('60') - Decimal(str(break_hours)))
+        return quantize_currency(worked_hours)
+
+    @classmethod
+    def evaluate_attendance_entry(
+        cls,
+        entry: AttendanceRecord,
+        is_holiday: bool = False,
+        is_weekend: bool = False,
+        shift_rules: Dict[ShiftType, ShiftRule] = DEFAULT_SHIFT_RULES,
+        max_daily_ot: Decimal = Decimal('4.0'),
+        late_threshold_mins: int = 15,
+        scheduled_start: Optional[str] = None,
+        scheduled_end: Optional[str] = None,
+    ) -> AttendanceRecord:
+        """
+        FR-ATT-04, FR-ATT-05, FR-ATT-06, FR-ATT-07, FR-ATT-09, FR-ATT-11
+        """
+        if entry.absent:
+            entry.hours_worked = Decimal('0.00')
+            entry.ot_hours = Decimal('0.00')
+            entry.weekend_ot = Decimal('0.00')
+            entry.holiday_ot = Decimal('0.00')
+            entry.multiplier = Decimal('1.0')
+            return entry
+
+        if entry.clock_in and entry.clock_out:
+            entry.hours_worked = cls.calculate_hours_worked(entry.clock_in, entry.clock_out, entry.break_hours)
+
+        rule = shift_rules.get(entry.shift, DEFAULT_SHIFT_RULES[ShiftType.DAY])
+        std_hours = rule.std_hours
+
+        # Highest multiplier check (FR-ATT-07)
+        multipliers = [rule.multiplier]
+        if is_holiday:
+            multipliers.append(DEFAULT_SHIFT_RULES[ShiftType.HOLIDAY].multiplier)
+        if is_weekend:
+            multipliers.append(DEFAULT_SHIFT_RULES[ShiftType.WEEKEND].multiplier)
+        entry.multiplier = max(multipliers)
+
+        if is_holiday or entry.shift == ShiftType.HOLIDAY:
+            entry.holiday_ot = entry.hours_worked
+            entry.ot_hours = Decimal('0.00')
+            entry.weekend_ot = Decimal('0.00')
+        elif is_weekend or entry.shift == ShiftType.WEEKEND:
+            entry.weekend_ot = entry.hours_worked
+            entry.ot_hours = Decimal('0.00')
+            entry.holiday_ot = Decimal('0.00')
+        else:
+            entry.ot_hours = quantize_currency(max(Decimal('0.00'), entry.hours_worked - std_hours))
+            entry.weekend_ot = Decimal('0.00')
+            entry.holiday_ot = Decimal('0.00')
+
+        # Overtime cap warning (FR-ATT-09)
+        total_ot = entry.ot_hours + entry.weekend_ot + entry.holiday_ot
+        if total_ot > max_daily_ot:
+            entry.ot_exceeded_warning = f"Overtime of {total_ot}h exceeds daily cap of {max_daily_ot}h"
+
+        return entry
+
     @staticmethod
     def calculate_ot_pay(
         hourly_rate: Decimal,
