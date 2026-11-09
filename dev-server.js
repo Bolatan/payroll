@@ -1,4 +1,6 @@
-// Local development only (npm run dev). Vercel does not use this file; it serves api/index.js.
+const express = require('express');
+const path = require('path');
 const app = require('./lib/app');
+app.use(express.static(path.join(__dirname, 'public')));
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log('http://localhost:' + port));
