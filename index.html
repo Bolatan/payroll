@@ -73,7 +73,20 @@ dialog table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 const $ = (s) => document.querySelector(s);
 const money = (n) => (n ?? 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-let me = null, tab = 'Payroll';
+let me = null, tab = 'Payroll', empListCache = [];
+
+async function getEmployeesList() {
+  if (empListCache.length) return empListCache;
+  try {
+    const list = await api('/api/employees');
+    if (Array.isArray(list)) {
+      empListCache = list.sort((a, b) => (a.empId || '').localeCompare(b.empId || ''));
+    }
+  } catch (e) {
+    empListCache = [];
+  }
+  return empListCache;
+}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (sessionStorage.getItem('token') || '') }, body: opts.body ? JSON.stringify(opts.body) : undefined });
@@ -112,15 +125,15 @@ const SCREENS = {
     fields: [['empId', 'Employee ID'], ['date', 'Date', 'date'], ['shift', 'Shift', 'select', shifts], ['clockIn', 'Clock in', 'time'], ['clockOut', 'Clock out', 'time'], ['breakHours', 'Unpaid break (hours)', 'number'], ['absent', 'Mark Absent', 'check']],
     cols: ['empId', 'date', 'shift', 'clockIn', 'clockOut', 'hoursWorked', 'otHours', 'weekendOT', 'holidayOT', 'multiplier', 'absent', 'lateMinutes', 'approved'] },
   Loans: { path: '/api/loans', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
-    fields: [['loanId', 'Loan ID (Optional)'], ['empId', 'Employee ID'], ['amount', 'Loan amount', 'number'], ['termMonths', 'Term (months)', 'number'], ['startPeriod', 'First deduction (YYYY-MM)'], ['interestRate', 'Interest Rate (e.g. 0.05)', 'number']],
+    fields: [['loanId', 'Loan ID (Optional)'], ['empId', 'Employee ID'], ['amount', 'Loan amount', 'number'], ['termMonths', 'Term (months)', 'number'], ['startPeriod', 'First deduction period', 'month'], ['interestRate', 'Interest Rate (e.g. 0.05)', 'number']],
     cols: ['loanId', 'empId', 'amount', 'termMonths', 'monthly', 'outstanding', 'startPeriod', 'status'], pending: (r) => r.status === 'Pending' },
   'Loan Repayments': { path: '/api/loans-ledger', roles: ['payroll', 'approver', 'hr', 'auditor'], readOnly: true,
     cols: ['loanId', 'empId', 'period', 'amountDeducted', 'balanceBefore', 'balanceAfter', 'type', 'approvedBy'] },
   'Deductions Register': { path: '/api/deductions', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
-    fields: [['empId', 'Employee ID'], ['type', 'Type', 'select', ['cooperative', 'union_dues', 'damages', 'salary_advance', 'other']], ['title', 'Title / Description'], ['amount', 'Amount', 'number'], ['recurring', 'Recurring', 'check'], ['startPeriod', 'Start Period (YYYY-MM)'], ['endPeriod', 'End Period (YYYY-MM)'], ['reason', 'Reason']],
+    fields: [['empId', 'Employee ID'], ['type', 'Type', 'select', ['cooperative', 'union_dues', 'damages', 'salary_advance', 'other']], ['title', 'Title / Description'], ['amount', 'Amount', 'number'], ['recurring', 'Recurring', 'check'], ['startPeriod', 'Start Period', 'month'], ['endPeriod', 'End Period', 'month'], ['reason', 'Reason']],
     cols: ['empId', 'type', 'title', 'amount', 'recurring', 'startPeriod', 'endPeriod', 'status'], pending: (r) => r.status === 'Pending' },
   Adjustments: { path: '/api/adjustments', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
-    fields: [['period', 'Period (YYYY-MM)'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['amount', 'Amount', 'number'], ['reason', 'Reason']],
+    fields: [['period', 'Period', 'month'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['amount', 'Amount', 'number'], ['reason', 'Reason']],
     cols: ['period', 'empId', 'type', 'amount', 'reason', 'approved'] },
   Recruitment: { path: '/api/recruitment', roles: ['hr', 'approver'], write: ['hr'],
     fields: [['fullName', 'Full Name'], ['email', 'Email'], ['phone', 'Phone'], ['position', 'Position'], ['department', 'Department'], ['offeredSalary', 'Offered Salary', 'number']],
@@ -128,9 +141,12 @@ const SCREENS = {
   Appraisals: { path: '/api/appraisals', roles: ['hr', 'approver', 'payroll'], write: ['hr', 'approver'], approve: ['approver'],
     fields: [['empId', 'Employee ID'], ['cycle', 'Cycle (e.g. 2026-H1)'], ['rating', 'Rating (1-5)', 'number'], ['feedback', 'Feedback'], ['bonusRecommendation', 'Recommended Bonus', 'number']],
     cols: ['empId', 'cycle', 'rating', 'bonusRecommendation', 'status', 'reviewer'], pending: (r) => r.status === 'Draft' },
-  Leaves: { path: '/api/ess/leaves', roles: ['hr', 'approver', 'employee'], write: ['hr', 'employee'], approve: ['approver', 'hr'],
-    fields: [['empId', 'Employee ID'], ['leaveType', 'Leave Type', 'select', ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Unpaid']], ['startDate', 'Start Date', 'date'], ['endDate', 'End Date', 'date'], ['days', 'Days', 'number'], ['reason', 'Reason']],
-    cols: ['empId', 'leaveType', 'startDate', 'endDate', 'days', 'status', 'approvedBy'], pending: (r) => r.status === 'Pending' },
+  Leaves: { path: '/api/leaves', roles: ['hr', 'approver', 'employee'], write: ['hr', 'employee'], approve: ['approver', 'hr'],
+    fields: [['empId', 'Employee ID'], ['leaveType', 'Leave Type', 'select', ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Study', 'Unpaid']], ['startDate', 'Start Date', 'date'], ['endDate', 'End Date', 'date'], ['reason', 'Reason'], ['overrideReason', 'Override Reason (if balance exceeded)']],
+    cols: ['empId', 'leaveType', 'startDate', 'endDate', 'days', 'status', 'isOverridden', 'approvedBy'], pending: (r) => r.status === 'Pending' },
+  'Leave Balances': { path: '/api/leaves/balances', roles: ['hr', 'approver', 'admin', 'employee'], write: ['hr', 'admin'],
+    fields: [['empId', 'Employee ID'], ['year', 'Year', 'number'], ['leaveType', 'Leave Type', 'select', ['Annual', 'Sick', 'Maternity', 'Paternity', 'Compassionate', 'Study', 'Unpaid']], ['entitlement', 'Entitlement (Days)', 'number'], ['carryOver', 'Carry Over (Days)', 'number']],
+    cols: ['empId', 'year', 'leaveType', 'entitlement', 'used', 'pending', 'carryOver'] },
   'General Ledger': { path: '/api/gl/journals', roles: ['payroll', 'approver', 'admin'], readOnly: true,
     cols: ['journalNumber', 'period', 'postDate', 'totalDebit', 'totalCredit', 'status', 'postedBy'] },
   'Bank Payments': { path: '/api/payments/batches', roles: ['payroll', 'approver'], readOnly: true,
@@ -217,10 +233,23 @@ async function show() {
     </div>`;
   }
 
-  const form = !s.readOnly && can(s.write) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) =>
-    type === 'select' ? `<label>${label}<select name="${k}">${opts.map((o) => `<option>${o}</option>`).join('')}</select></label>`
-    : type === 'check' ? `<label class="check"><input type="checkbox" name="${k}" checked>${label}</label>`
-    : `<label>${label}<input name="${k}" type="${type}" ${type === 'number' ? 'step="any" min="0"' : ''}></label>`).join('') + `<button class="primary">Save</button></form>` : '';
+  // Fetch existing employees if this screen requires empId and is not Employees module
+  let empOptionsHtml = '';
+  if (tab !== 'Employees' && Array.isArray(s.fields) && s.fields.some(([k]) => k === 'empId')) {
+    const emps = await getEmployeesList();
+    empOptionsHtml = `<option value="">Select Employee...</option>` + emps.map((e) =>
+      `<option value="${esc(e.empId)}">${esc(e.empId)} - ${esc(e.surname)} ${esc(e.firstName)} (${esc(e.department || 'General')})</option>`
+    ).join('');
+  }
+
+  const form = !s.readOnly && can(s.write) && Array.isArray(s.fields) ? `<form class="card" id="f"><h3 style="grid-column:1/-1;margin:0">Add ${tab.toLowerCase().replace(/s$/, '')}</h3>` + s.fields.map(([k, label, type = 'text', opts]) => {
+    if (k === 'empId' && tab !== 'Employees') {
+      return `<label>${label}<select name="empId" required>${empOptionsHtml}</select></label>`;
+    }
+    return type === 'select' ? `<label>${label}<select name="${k}">${(opts || []).map((o) => `<option>${o}</option>`).join('')}</select></label>`
+      : type === 'check' ? `<label class="check"><input type="checkbox" name="${k}" checked>${label}</label>`
+      : `<label>${label}<input name="${k}" type="${type}" ${type === 'number' ? 'step="any" min="0"' : ''}></label>`;
+  }).join('') + `<button class="primary">Save</button></form>` : '';
   const canApprove = s.approve && can(s.approve);
   const isRecruitment = tab === 'Recruitment' && can(['hr']);
   const isEmployees = tab === 'Employees';
@@ -243,6 +272,8 @@ async function show() {
     e.preventDefault();
     const body = {};
     s.fields.forEach(([k, , type]) => { const el = e.target.elements[k]; body[k] = type === 'check' ? el.checked : type === 'number' ? (el.value === '' ? undefined : Number(el.value)) : el.value; });
+    // Invalidate employee cache when adding employee
+    if (tab === 'Employees') empListCache = [];
     try { await api(s.path, { method: 'POST', body }); say('Saved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
   };
 
@@ -311,6 +342,7 @@ async function show() {
       try {
         const data = JSON.parse(raw);
         const res = await api('/api/employees/bulk-import', { method: 'POST', body: data });
+        empListCache = [];
         say(`Import complete: ${res.imported} succeeded, ${res.failed} failed.`);
         $('#importResult').innerHTML = `<p><b>Total:</b> ${res.total} | <b>Imported:</b> ${res.imported} | <b>Failed:</b> ${res.failed}</p>` +
           (res.report.length ? `<ul>${res.report.map((r) => `<li>Row ${r.row} (${esc(r.empId)}): ${esc(r.status)} ${r.errors ? '- ' + esc(r.errors.join(', ')) : ''}</li>`).join('')}</ul>` : '');
@@ -494,13 +526,19 @@ function accountView() {
 async function usersView() {
   let rows = [];
   try { rows = await api('/api/users'); } catch (e) { return say(esc(e.message), 'err'); }
-  const roles = ['hr', 'payroll', 'approver', 'employee', 'admin'];
+  if (!Array.isArray(rows)) rows = [];
+  const emps = await getEmployeesList();
+  const empSelectOptions = `<option value="">None (Non-ESS)</option>` + emps.map((e) =>
+    `<option value="${esc(e.empId)}">${esc(e.empId)} - ${esc(e.surname)} ${esc(e.firstName)}</option>`
+  ).join('');
+
+  const roles = ['admin', 'hr', 'payroll', 'approver', 'supervisor', 'executive', 'auditor', 'tax_advisor', 'employee'];
   $('#view').innerHTML = `<h2>Users</h2>
   <form class="card" id="uf"><h3 style="grid-column:1/-1;margin:0">Add user</h3>
-    <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,30}"></label>
+    <label>Username<input name="username" required pattern="[a-zA-Z0-9._\\-]{3,30}"></label>
     <label>Full name<input name="name" required></label>
     <label>Role<select name="role">${roles.map((r) => `<option>${r}</option>`).join('')}</select></label>
-    <label>Employee ID (if ESS user)<input name="empId"></label>
+    <label>Employee ID (if ESS user)<select name="empId">${empSelectOptions}</select></label>
     <label>Temporary password<input name="password" required minlength="10"></label>
     <button class="primary">Create user</button></form>
   <div class="card scroll"><table><thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Linked EmpID</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>` +
