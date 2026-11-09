@@ -34,16 +34,48 @@ npm run dev            # http://localhost:3000
 npm test               # tax and payroll unit tests (no database needed)
 ```
 
-## Roles
+## Stakeholders & Roles Matrix
 
-| Role | Can do |
-|---|---|
-| hr | Employees, loans, adjustments (create) |
-| payroll | Attendance, loans and adjustments (create), calculate payroll, payslips, bank file |
-| approver | Approve attendance, loans, adjustments and payroll; view audit log |
-| admin | Everything |
+The system implements Role-Based Access Control (RBAC) and dedicated workflows tailored to the 9 factory payroll stakeholders (REQUIREMENTS.md Section 3.4 & FR-SEC-02):
 
-The person who calculates payroll cannot approve it, and creators cannot approve their own loans or adjustments.
+| Stakeholder | System Role | Primary Responsibilities & Permissions | Dedicated Views & Endpoints |
+|---|---|---|---|
+| **Payroll Officer** | `payroll` | Prepares inputs, runs gross-to-net calculations, creates loans/adjustments, produces payslips, exports bank transfer schedule | `Payroll` view, `/api/payroll/:period/calculate`, `/api/payroll/:period/bank.csv` |
+| **Finance / Payroll Manager** | `approver` | Reviews and approves payroll, signs off remittances, approves attendance/loans/adjustments, downloads bank payment file | `Payroll`, `Remittances`, `/api/payroll/:period/approve`, `/api/audit` |
+| **HR Manager / HR Officer** | `hr` | Maintains employee master records (salaries, allowances, bank accounts, TIN, PFA), creates loan requests and adjustments | `Employees`, `Loans`, `Adjustments` (`/api/employees`) |
+| **Production / Shift Supervisors** | `supervisor` | Submits shift attendance/clock times and approves attendance/overtime for shifts (with segregation of duties: cannot approve self-created attendance) | `Attendance` view (`/api/attendance`, `/api/attendance/:id/approve`) |
+| **Managing Director / CFO** | `executive` | Receives executive dashboard metrics, monitors department costs and employer liabilities, reviews high-value and exception payroll, approves payroll runs | `Executive Dashboard` (`/api/dashboard/:period`), `Payroll` view |
+| **Employees** | `employee` | Self-service access to view and print personal approved monthly payslips (restricted to own `empId`) | `My Payslips` view (`/api/me/payslips`, `/api/me/payslips/:period`) |
+| **Internal Audit** | `auditor` | Read-only inspection of immutable append-only audit trail, employee records, attendance records, and approved payroll registers | `Audit` view (`/api/audit`), read-only payroll and employee views |
+| **External Tax Advisor / Statutory bodies** | `tax_advisor` | Verifies tax bands, monitors statutory compliance (NRS, state IRS, PFAs/PenCom, FMBN, NSITF, ITF), downloads statutory remittance schedules | `Remittances` view, `/api/payroll/:period/remittances/summary`, `/api/payroll/:period/remittance/*.csv` |
+| **IT Support** | `admin` | System deployment, environment configuration, database management, user provisioning, password resets, access administration | `Users` management view (`/api/users`), full system access |
+
+### Segregation of Duties & Controls
+- **Preparer vs Approver:** The user who runs the payroll calculation (`preparedBy`) cannot approve and lock it.
+- **Creator vs Approver:** Users who create attendance records, loan requests, or salary adjustments cannot approve their own entries.
+- **Employee Privacy:** Employees can only access payslips associated with their own `empId`.
+- **Audit Immutability:** Audit records are append-only; update and delete operations are blocked at the database model layer.
+
+## Stakeholder Workflows
+
+### 1. Employee Self-Service Payslip Access
+Employees log in with their assigned credentials and access the **My Payslips** screen. They can view the historical list of approved payslips, inspect line-item breakdowns (Basic, Allowances, Overtime, Bonuses, Gross, Pension, NHF, PAYE, Loans, Net Pay), and print their official monthly payslip.
+
+### 2. Shift Supervisor Attendance Submission & Approval
+Shift supervisors record clock-in, clock-out, unpaid break, and shift types (Day, Night, Weekend, Holiday). Overtime is calculated according to statutory multipliers. Another supervisor or the finance manager verifies and approves attendance before payroll processing.
+
+### 3. Executive Dashboard for MD / CFO
+Accessible via the **Executive** tab (`/api/dashboard/:period`), providing senior executives with:
+- High-level KPIs: Paid Headcount, Total Gross, Total Net, Total PAYE, Pension (Employee + Employer), NHF, Overtime Cost/Hours, and Total Employer Cost.
+- Department Cost Breakdown: Headcount, Gross Pay, Overtime, Net Pay, and Employer Cost by Department.
+- Governance & Risk Controls: Immediate visibility of high-value payees (net pay ≥ ₦1,000,000), flagged lines (e.g. negative net or missing bank details), and calculation warnings.
+
+### 4. Statutory Remittances for Tax Advisors & Statutory Bodies
+Accessible via the **Remittances** tab (`/api/payroll/:period/remittances/summary`), providing:
+- **PAYE Remittance Schedule (`paye.csv`):** State-by-state breakdown (Lagos, Ogun, etc.) with Employee ID, Name, TIN, Gross, Chargeable Income, and PAYE tax.
+- **Pension Remittance Schedule (`pension.csv`):** Employee 8% contribution, Employer 10% statutory contribution, Total 18% contribution, Pension PIN, and Pensionable Emoluments for PFAs and PenCom.
+- **National Housing Fund Schedule (`nhf.csv`):** Basic salary base and 2.5% NHF deduction for FMBN.
+- **Employer Statutory Levies Summary:** Industrial Training Fund (ITF 1%) and Employees Compensation Scheme (NSITF 1%).
 
 ## Users and security
 
