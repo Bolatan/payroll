@@ -153,6 +153,12 @@ const SCREENS = {
     cols: ['batchReference', 'period', 'channel', 'totalAmount', 'successfulCount', 'failedCount', 'status'] },
   'Time-Clock': { path: '/api/timeclock/punches', roles: ['payroll', 'approver', 'admin'],
     cols: ['deviceId', 'empId', 'timestamp', 'punchType', 'verificationType', 'processed'] },
+  'Shift Setup': { path: '/api/shifts/setup', roles: ['admin', 'hr', 'payroll', 'approver'], write: ['admin', 'hr'],
+    fields: [['shift', 'Shift Name (e.g. Day, Night, Weekend, Holiday, Custom)'], ['stdHours', 'Standard Hours (1-24)', 'number'], ['multiplier', 'OT Multiplier (>= 1.0)', 'number'], ['startTime', 'Start Time (HH:MM)'], ['endTime', 'End Time (HH:MM)'], ['unpaidBreakHours', 'Unpaid Break Hours', 'number'], ['effectiveDate', 'Effective Date', 'date'], ['reason', 'Reason for change']],
+    cols: ['shift', 'stdHours', 'multiplier', 'startTime', 'endTime', 'unpaidBreakHours', 'effectiveDate'] },
+  'Public Holidays': { path: '/api/holidays', roles: ['admin', 'hr', 'payroll', 'approver'], write: ['admin', 'hr'],
+    fields: [['date', 'Holiday Date', 'date'], ['name', 'Holiday Name']],
+    cols: ['date', 'name'] },
   Audit: { path: '/api/audit', roles: ['approver', 'auditor', 'admin'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
 };
 
@@ -364,7 +370,7 @@ async function show() {
   };
 }
 
-const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding|offeredSalary|totalAmount|totalDebit|totalCredit)$/.test(c) ? money(v) : /^(date|ts|timestamp|postDate|startDate|endDate)$/.test(c) ? new Date(v).toLocaleString('en-NG') : esc(v);
+const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding|offeredSalary|totalAmount|totalDebit|totalCredit)$/.test(c) ? money(v) : /^(date|ts|timestamp|postDate|startDate|endDate|effectiveDate)$/.test(c) ? new Date(v).toLocaleDateString('en-NG') : esc(v);
 
 // ---- Dedicated Stakeholder Views: My Payslips, Executive Dashboard, Remittances ----
 async function myPayslipsView() {
