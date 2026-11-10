@@ -419,3 +419,65 @@ def test_fr_att_attendance_evaluation_and_night_shift():
     assert evaluated_long.hours_worked == Decimal('14.00')
     assert evaluated_long.ot_hours == Decimal('6.00')
     assert evaluated_long.ot_exceeded_warning is not None
+
+
+def test_payroll_engine_gross_to_net_bases_and_bands():
+    """
+    Tests FR-PAY-01 through FR-PAY-07 in the Python reference engine:
+    bases separation (pensionable emoluments, nhf base, taxable gross)
+    and band-by-band tax details.
+    """
+    emp = Employee(
+        emp_id="EMP_ENG_01",
+        first_name="Chidi",
+        surname="Eze",
+        department="Engineering",
+        position="Technician",
+        hire_date="2021-06-01",
+        basic_salary=Decimal('150000.00'),
+        housing_allowance=Decimal('60000.00'),
+        transport_allowance=Decimal('40000.00'),
+        other_allowances=Decimal('10000.00'),
+        pension_pct=Decimal('0.08'),
+        nhf_pct=Decimal('0.025'),
+        nhf_enrolled=True,
+        annual_rent=Decimal('600000.00')
+    )
+
+    res = PayrollCalculator.calculate_employee_payroll(
+        employee=emp,
+        period="2026-11",
+        ot_pay=Decimal('15000.00'),
+        bonuses=Decimal('20000.00'),
+        other_deductions=Decimal('5000.00')
+    )
+
+    # 1. Earnings and Gross (FR-PAY-01)
+    # Basic = 150k, Allowances = 110k, OT = 15k, Bonuses = 20k -> Gross = 295,000
+    assert res.basic_salary == Decimal('150000.00')
+    assert res.total_allowances == Decimal('110000.00')
+    assert res.ot_pay == Decimal('15000.00')
+    assert res.bonuses == Decimal('20000.00')
+    assert res.gross_pay == Decimal('295000.00')
+
+    # 2. Separately stored bases (FR-PAY-02)
+    assert res.nhf_base == Decimal('150000.00')
+    assert res.pensionable_emoluments == Decimal('250000.00') # 150k + 60k + 40k
+    assert res.taxable_gross == Decimal('295000.00')
+
+    # 3. Pension and NHF (FR-PAY-03, FR-PAY-04)
+    assert res.pension_employee == Decimal('20000.00') # 8% of 250k
+    assert res.pension_employer == Decimal('25000.00') # 10% of 250k
+    assert res.nhf == Decimal('3750.00')              # 2.5% of 150k
+
+    # 4. Band-by-band tax details (FR-PAY-05, FR-PAY-07)
+    assert len(res.tax_bands) == 6
+    assert res.tax_bands[0]['band'] == 1
+    assert res.tax_bands[0]['rate'] == Decimal('0.00')
+    assert res.tax_bands[1]['band'] == 2
+    assert res.tax_bands[1]['rate'] == Decimal('0.15')
+
+    # 5. Net pay reconciliation (FR-PAY-06, FR-PAY-09)
+    total_deductions = res.pension_employee + res.nhf + res.monthly_paye + res.loan_deduction + res.other_deductions
+    assert res.net_pay == res.gross_pay - total_deductions
+    assert not res.is_negative_blocked
