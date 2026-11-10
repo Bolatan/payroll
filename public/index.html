@@ -264,7 +264,7 @@ async function show() {
 
   $('#view').innerHTML = `<h2>${tab}</h2>${extraActions}${form}<div class="card scroll">${rows.length ? `<table><thead><tr>${s.cols.map((c) => `<th>${c}</th>`).join('')}${(canApprove || isRecruitment || isEmployees) ? '<th>Action</th>' : ''}</tr></thead><tbody>` +
     rows.map((r) => `<tr>${s.cols.map((c) => `<td class="${typeof r[c] === 'number' ? 'num' : ''}">${fmt(c, r[c])}</td>`).join('')}${(canApprove || isRecruitment || isEmployees) ? `<td>` +
-      ((canApprove && (s.pending ? s.pending(r) : r.approved === false)) ? `<button data-id="${r._id}">Approve</button> ` : '') +
+      ((canApprove && (s.pending ? s.pending(r) : r.approved === false)) ? `<button data-id="${r._id}">Approve</button> <button data-reject="${r._id}">Reject</button> ` : '') +
       ((isRecruitment && r.stage !== 'Hired') ? `<button data-hire="${r._id}">Hire & Onboard</button> ` : '') +
       ((isEmployees && can(['hr']) && r.status !== 'Terminated') ? `<button data-deact="${r.empId}">Deactivate</button>` : '') +
       `</td>` : ''}</tr>`).join('') + `</tbody></table>` : `<p style="color:var(--muted)">Nothing here yet.${form ? ' Use the form above to add the first record.' : ''}</p>`}</div>`;
@@ -359,6 +359,9 @@ async function show() {
   if (canApprove || isRecruitment || isEmployees) $('#view').onclick = async (e) => {
     if (e.target.dataset.id) {
       try { await api(`${s.path}/${e.target.dataset.id}/approve`, { method: 'POST' }); say('Approved.'); show(); } catch (err) { say(esc(err.message), 'err'); }
+    } else if (e.target.dataset.reject) {
+      const reason = prompt('Enter rejection reason (optional):') || undefined;
+      try { await api(`${s.path}/${e.target.dataset.reject}/reject`, { method: 'POST', body: { reason } }); say('Rejected.'); show(); } catch (err) { say(esc(err.message), 'err'); }
     } else if (e.target.dataset.hire) {
       try { await api(`/api/recruitment/${e.target.dataset.hire}/hire`, { method: 'POST', body: {} }); say('Candidate hired and added to Employee master.'); show(); }
       catch (err) { say(esc(err.message), 'err'); }

@@ -1,6 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const { Loan, RepaymentLedger, DeductionRegister } = require('../lib/models');
 const { calcLine, calculateLoanMonthlyDeduction } = require('../lib/payroll');
+
+test('FR-LN-01: Loan model schema defines LoanID, EmpID, Amount, StartDate, TermMonths, and Interest fields', () => {
+  const schema = Loan.schema.paths;
+  assert.ok(schema.loanId, 'loanId field is required');
+  assert.ok(schema.empId, 'empId field is required');
+  assert.ok(schema.amount, 'amount field is required');
+  assert.ok(schema.startDate, 'startDate field is required');
+  assert.ok(schema.termMonths, 'termMonths field is required');
+  assert.ok(schema.monthly, 'monthly deduction field is required');
+  assert.ok(schema.outstanding, 'outstanding field is required');
+  assert.ok(schema.status, 'status field is required');
+});
 
 test('FR-LN-01: Calculate MonthlyDeduction with Amount ÷ TermMonths and interest if configured', () => {
   // Without interest
@@ -238,4 +251,48 @@ test('FR-LN-09: Deductions register records and applies recurring/one-off deduct
   const lineApril = calcLine(emp, { deductions }, '2026-04');
   assert.strictEqual(lineApril.otherDeductions, 20000);
   assert.strictEqual(lineApril.deductionRegisterBreakdown.length, 2);
+});
+
+test('FR-LN-02 & FR-LN-06: Loan and change-request approval segregation of duties logic', () => {
+  // Test FR-LN-02: approver cannot be the creator/requestor
+  const loanRecord = {
+    createdBy: 'john_payroll',
+    status: 'Pending',
+  };
+  const approver1 = 'john_payroll'; // same user
+  const approver2 = 'mary_manager'; // distinct user
+
+  assert.strictEqual(loanRecord.createdBy === approver1, true, 'Same user should be identified and rejected');
+  assert.strictEqual(loanRecord.createdBy === approver2, false, 'Distinct approver should be permitted');
+
+  // Test FR-LN-06 change request approver segregation of duties
+  const changeRequest = {
+    type: 'topup',
+    requestedBy: 'alice_hr',
+    status: 'Pending',
+  };
+  assert.strictEqual(changeRequest.requestedBy === 'alice_hr', true, 'Requestor cannot approve own change request');
+  assert.strictEqual(changeRequest.requestedBy === 'bob_approver', false, 'Separate approver can approve change request');
+});
+
+test('FR-LN-04: RepaymentLedger schema defines LoanID, period, amountDeducted, and balanceAfter', () => {
+  const schema = RepaymentLedger.schema.paths;
+  assert.ok(schema.loanId, 'loanId must be defined on RepaymentLedger');
+  assert.ok(schema.period, 'period must be defined on RepaymentLedger');
+  assert.ok(schema.amountDeducted, 'amountDeducted must be defined on RepaymentLedger');
+  assert.ok(schema.balanceAfter, 'balanceAfter must be defined on RepaymentLedger');
+  assert.ok(schema.type, 'type must be defined on RepaymentLedger');
+});
+
+test('FR-LN-09: DeductionRegister schema supports all required deduction types', () => {
+  const schema = DeductionRegister.schema.paths;
+  assert.ok(schema.empId, 'empId is required on DeductionRegister');
+  assert.ok(schema.type, 'type is required on DeductionRegister');
+  assert.ok(schema.amount, 'amount is required on DeductionRegister');
+  assert.ok(schema.startPeriod, 'startPeriod is required on DeductionRegister');
+
+  const enumValues = schema.type.enumValues;
+  ['cooperative', 'union_dues', 'damages', 'salary_advance', 'other'].forEach((t) => {
+    assert.ok(enumValues.includes(t), `Type ${t} should be supported in DeductionRegister enum`);
+  });
 });

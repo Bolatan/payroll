@@ -150,6 +150,34 @@ class Loan:
     monthly_deduction: Decimal
     outstanding: Decimal
     status: str = "Active"
+    interest_rate: Decimal = Decimal('0.00')
+    interest_type: str = "none"
+    holiday_periods: List[str] = field(default_factory=list)
+    flagged_for_final_recovery: bool = False
+
+    @staticmethod
+    def calculate_monthly_deduction(
+        amount: Decimal,
+        term_months: int,
+        interest_rate: Decimal = Decimal('0.00'),
+        interest_type: str = "none"
+    ) -> Decimal:
+        """
+        FR-LN-01: Calculate monthly loan deduction: Amount ÷ TermMonths, plus interest if configured.
+        """
+        if term_months <= 0:
+            return Decimal('0.00')
+        principal = Decimal(str(amount))
+        rate = Decimal(str(interest_rate))
+        if rate > Decimal('0.00'):
+            if interest_type == "monthly":
+                total = principal + (principal * rate * Decimal(str(term_months)))
+                return quantize_currency(total / Decimal(str(term_months)))
+            else:
+                total_interest = principal * rate
+                total = principal + total_interest
+                return quantize_currency(total / Decimal(str(term_months)))
+        return quantize_currency(principal / Decimal(str(term_months)))
 
 @dataclass
 class PayrollResult:
