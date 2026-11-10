@@ -221,7 +221,9 @@ def harden_workbook(filename, output_filenames):
         [],
         ['NET PAY (NGN)', '=Payroll_Register!AA2', None, None],
         [],
-        ['EMPLOYER CONTRIBUTIONS', None, None, None],
+        ['LOAN & YEAR-TO-DATE INFORMATION', None, None, None],
+        ['Remaining Loan Balance:', '=Loans!G2', 'YTD Gross Pay:', '=Payroll_Register!J2'],
+        ['YTD PAYE Tax:', '=Payroll_Register!X2', 'YTD Employee Pension:', '=Payroll_Register!M2'],
         ['Employer Pension (10%):', '=Payroll_Register!N2', 'Status:', 'APPROVED / CONFIRMED']
     ]
     for row in slp_content:

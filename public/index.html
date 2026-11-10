@@ -45,10 +45,10 @@ td.num,th.num{text-align:right}
 .msg{padding:.6rem .8rem;border-radius:6px;margin-bottom:1rem;border:1px solid var(--line);background:var(--surface)}
 .msg.err{border-color:var(--danger);color:var(--danger)}.msg.warn{border-color:var(--warn);color:var(--warn)}
 .flag{color:var(--danger);font-weight:500}
-dialog{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);max-width:520px;width:92%}
+dialog{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);max-width:640px;width:92%;max-height:90vh;overflow-y:auto}
 dialog table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 @media (max-width:860px){#app{grid-template-columns:1fr}nav{flex-direction:row;flex-wrap:wrap;padding:.6rem}nav strong,nav .who{display:none}}
-@media print{nav,.noprint{display:none!important}#app{display:block}dialog{border:0}}
+@media print{nav,.noprint{display:none!important}#app{display:block}dialog{border:0;max-height:none}}
 </style>
 </head>
 <body>
@@ -195,10 +195,94 @@ function renderNav() {
 }
 
 function showPayslipModal(p) {
-  const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
-  $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${esc(p.period)}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}${p.status !== 'Approved' ? '<br><b class="flag">Draft, not approved</b>' : ''}</p>
-  <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours || 0} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
-  <p class="noprint" style="display:flex;gap:.5rem;margin-top:1rem"><button class="primary" onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
+  const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td style="text-align:right">${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
+  const compName = p.company?.name || 'Lagos Manufacturing Factory Ltd';
+  const payDate = p.payDate || '';
+  const bankInfo = p.bank ? `${esc(p.bank)} / ${esc(p.accountNo)}` : esc(p.accountNo || 'N/A');
+  const otH = p.overtime?.hours !== undefined ? p.overtime.hours : (p.otHours || 0);
+  const otP = p.overtime?.amount !== undefined ? p.overtime.amount : (p.otPay || 0);
+  const allowTotal = p.allowances?.total !== undefined ? p.allowances.total : p.allowances;
+  const bonTotal = p.bonuses?.total !== undefined ? p.bonuses.total : p.bonuses;
+  const totDed = p.totalDeductions !== undefined ? p.totalDeductions : ((p.pension || 0) + (p.nhf || 0) + (p.paye || 0) + (p.loanDeduction || 0) + (p.otherDeductions || 0));
+
+  let itemisedAllowRows = '';
+  if (p.allowances?.itemised && Array.isArray(p.allowances.itemised) && p.allowances.itemised.length) {
+    itemisedAllowRows = p.allowances.itemised.map((a) => `<tr style="font-size:.85rem;color:var(--muted)"><td style="padding-left:1.5rem">↳ ${esc(a.name)}</td><td style="text-align:right">${money(a.amount)}</td></tr>`).join('');
+  }
+
+  let itemisedBonusRows = '';
+  if (p.bonuses?.itemised && Array.isArray(p.bonuses.itemised) && p.bonuses.itemised.length) {
+    itemisedBonusRows = p.bonuses.itemised.map((b) => `<tr style="font-size:.85rem;color:var(--muted)"><td style="padding-left:1.5rem">↳ ${esc(b.name)}</td><td style="text-align:right">${money(b.amount)}</td></tr>`).join('');
+  }
+
+  $('#slip').innerHTML = `
+  <div style="border-bottom:2px solid var(--border);padding-bottom:.8rem;margin-bottom:.8rem">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div>
+        <h3 style="margin:0 0 .2rem 0">${esc(compName)}</h3>
+        <span style="font-size:.85rem;color:var(--muted)">Employee Payslip</span>
+      </div>
+      <div style="text-align:right;font-size:.9rem">
+        <div>Period: <b>${esc(p.period)}</b></div>
+        ${payDate ? `<div>Pay Date: <b>${esc(payDate)}</b></div>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.8rem;font-size:.88rem;margin-bottom:1rem;background:var(--subtle);padding:.8rem;border-radius:4px">
+    <div>
+      <div>Employee ID: <b>${esc(p.empId)}</b></div>
+      <div>Name: <b>${esc(p.name)}</b></div>
+      <div>Department: <b>${esc(p.department || 'Operations')}</b></div>
+      <div>Position: <b>${esc(p.position || 'Staff')}</b></div>
+    </div>
+    <div>
+      <div>Bank / Account: <b>${bankInfo}</b></div>
+      <div>Status: <b>${esc(p.status || 'Approved')}</b></div>
+      ${p.remainingLoanBalance > 0 ? `<div>Remaining Loan Balance: <b>${money(p.remainingLoanBalance)}</b></div>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead><tr><th>Earnings</th><th style="text-align:right">Amount (NGN)</th></tr></thead>
+    <tbody>
+      ${row('Basic Salary', p.basic)}
+      ${row(`Overtime (${otH} h)`, otP)}
+      ${row('Allowances (Total)', allowTotal)}
+      ${itemisedAllowRows}
+      ${row('Bonuses (Total)', bonTotal)}
+      ${itemisedBonusRows}
+      ${row('Gross Pay', p.gross, 1)}
+    </tbody>
+  </table>
+
+  <table style="margin-top:1rem">
+    <thead><tr><th>Deductions</th><th style="text-align:right">Amount (NGN)</th></tr></thead>
+    <tbody>
+      ${row('Employee Pension (8%)', p.pension)}
+      ${p.nhf > 0 ? row('NHF (2.5%)', p.nhf) : ''}
+      ${row('PAYE Tax (NTA 2025)', p.paye)}
+      ${row('Loan Deduction', p.loanDeduction)}
+      ${row('Other Deductions', p.otherDeductions)}
+      ${row('Total Deductions', totDed, 1)}
+    </tbody>
+  </table>
+
+  <div style="background:var(--subtle);padding:.8rem;margin-top:1rem;border-radius:4px;display:flex;justify-content:space-between;align-items:center;font-size:1.1rem">
+    <b>NET PAY:</b>
+    <b style="color:var(--primary);font-size:1.25rem">${money(p.netPay)}</b>
+  </div>
+
+  ${p.ytd ? `
+    <div style="margin-top:.8rem;padding:.6rem;border:1px solid var(--border);border-radius:4px;font-size:.82rem;color:var(--muted)">
+      <b>Year-to-Date (YTD):</b> Gross: ${money(p.ytd.gross)} | PAYE: ${money(p.ytd.paye)} | Pension: ${money(p.ytd.pension)}
+    </div>
+  ` : ''}
+
+  <p class="noprint" style="display:flex;gap:.5rem;margin-top:1rem">
+    <button class="primary" onclick="window.print()">Print Payslip</button>
+    <button onclick="document.querySelector('#slip').close()">Close</button>
+  </p>`;
   $('#slip').showModal();
 }
 
@@ -512,12 +596,10 @@ async function essView() {
   $('#view').onclick = async (e) => {
     const id = e.target.dataset.slip; const pPeriod = e.target.dataset.period;
     if (!id || !pPeriod) return;
-    const p = await api(`/api/payroll/${pPeriod}/payslip/${id}`);
-    const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
-    $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${p.period}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}</p>
-    <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
-    <p class="noprint" style="display:flex;gap:.5rem"><button onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
-    $('#slip').showModal();
+    try {
+      const p = await api(`/api/payroll/${pPeriod}/payslip/${id}`);
+      showPayslipModal(p);
+    } catch (err) { say(esc(err.message), 'err'); }
   };
 }
 
@@ -606,6 +688,8 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
     ${can(['payroll']) && !isLocked ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
     ${can(['approver', 'executive']) && !isLocked ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="batchSlips">Batch Payslips (Print / PDF)</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="distributeSlips">Distribute Payslips</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="postGL" class="primary">Post GL Journal</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="initiateBank">Direct Bank Transfer</button>' : ''}</div>
   <div class="msg ${isLocked ? '' : (run ? 'warn' : '')}">
@@ -648,6 +732,17 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   $('#bank') && ($('#bank').onclick = async () => {
     try { const r = await api(`/api/payroll/${period}/bank.csv`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
   });
+  $('#batchSlips') && ($('#batchSlips').onclick = () => {
+    window.open(`/api/payroll/${period}/payslips?format=print`, '_blank');
+  });
+  $('#distributeSlips') && ($('#distributeSlips').onclick = async () => {
+    const channel = prompt('Enter distribution channel (email, portal, or print):', 'email');
+    if (!channel) return;
+    try {
+      const res = await api(`/api/payroll/${period}/payslips/distribute`, { method: 'POST', body: { channel } });
+      say(res.message);
+    } catch (e) { say(esc(e.message), 'err'); }
+  });
   $('#postGL') && ($('#postGL').onclick = async () => {
     try { const r = await api(`/api/payroll/${period}/post-gl`, { method: 'POST' }); say(r.message); payrollView(period); }
     catch (e) { say(esc(e.message), 'err'); }
@@ -658,12 +753,10 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   });
   $('#view').onclick = async (e) => {
     const id = e.target.dataset.slip; if (!id) return;
-    const p = await api(`/api/payroll/${period}/payslip/${id}`);
-    const row = (l, v, b) => `<tr><td>${b ? '<b>' + l + '</b>' : l}</td><td>${b ? '<b>' + money(v) + '</b>' : money(v)}</td></tr>`;
-    $('#slip').innerHTML = `<h3 style="margin-top:0">Payslip, ${p.period}</h3><p>${esc(p.name)} (${esc(p.empId)})<br>${esc(p.department || '')} ${esc(p.position || '')}${p.status !== 'Approved' ? '<br><b class="flag">Draft, not approved</b>' : ''}</p>
-    <table>${row('Basic', p.basic)}${row('Allowances', p.allowances)}${row(`Overtime (${p.otHours} h)`, p.otPay)}${row('Bonuses', p.bonuses)}${row('Gross pay', p.gross, 1)}${row('Pension', p.pension)}${row('NHF', p.nhf)}${row('PAYE', p.paye)}${row('Loan deduction', p.loanDeduction)}${row('Other deductions', p.otherDeductions)}${row('Net pay', p.netPay, 1)}</table>
-    <p class="noprint" style="display:flex;gap:.5rem"><button onclick="window.print()">Print</button><button onclick="document.querySelector('#slip').close()">Close</button></p>`;
-    $('#slip').showModal();
+    try {
+      const p = await api(`/api/payroll/${period}/payslip/${id}`);
+      showPayslipModal(p);
+    } catch (err) { say(esc(err.message), 'err'); }
   };
 }
 
