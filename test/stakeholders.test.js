@@ -160,3 +160,25 @@ test('Employee self-service payslip authorization policy', () => {
   const canViewOther = user.role !== 'employee' || (user.empId && user.empId.toUpperCase() === otherTarget.toUpperCase());
   assert.strictEqual(canViewOther, false, 'Employee must not be able to view another employee payslip');
 });
+
+test('Username pattern attribute compiles with unicode / v-flag regex engine', () => {
+  const fs = require('fs');
+  const indexHtml = fs.readFileSync('index.html', 'utf8');
+  const publicIndexHtml = fs.readFileSync('public/index.html', 'utf8');
+
+  const patternMatch1 = indexHtml.match(/pattern="([^"]+)"/);
+  const patternMatch2 = publicIndexHtml.match(/pattern="([^"]+)"/);
+
+  assert.ok(patternMatch1, 'index.html should have a pattern attribute');
+  assert.ok(patternMatch2, 'public/index.html should have a pattern attribute');
+  assert.strictEqual(patternMatch1[1], patternMatch2[1]);
+
+  // Must compile without throwing SyntaxError when v flag is used
+  const re = new RegExp(`^(?:${patternMatch1[1]})$`, 'v');
+  assert.ok(re.test('admin'));
+  assert.ok(re.test('john_doe'));
+  assert.ok(re.test('john-doe'));
+  assert.ok(re.test('john.doe'));
+  assert.strictEqual(re.test('ab'), false);
+  assert.strictEqual(re.test('user@bad'), false);
+});
