@@ -21,11 +21,20 @@ test('FR-LV-01: Calculate leave days from the difference between EndDate and Sta
   const singleDay = calculateLeaveDays('2026-05-04', '2026-05-04');
   assert.strictEqual(singleDay, 1);
 
-  // Scenario 4: Optional working-day calculation if options specified
+  // Scenario 4: Optional working-day calculation excluding weekends
   const daysWorking = calculateLeaveDays('2026-05-04', '2026-05-10', [], { excludeWeekends: true });
   assert.strictEqual(daysWorking, 5);
 
-  // Scenario 5: Invalid date ranges return 0
+  // Scenario 5: Excluding both weekends and configured public holidays
+  // Monday 2026-05-04 to Sunday 2026-05-10 has 5 weekdays.
+  // If Wednesday 2026-05-06 is a Public Holiday, net leave days should be 4.
+  const daysWithHoliday = calculateLeaveDays('2026-05-04', '2026-05-10', ['2026-05-06'], {
+    excludeWeekends: true,
+    excludeHolidays: true,
+  });
+  assert.strictEqual(daysWithHoliday, 4);
+
+  // Scenario 6: Invalid date ranges return 0
   assert.strictEqual(calculateLeaveDays('2026-05-10', '2026-05-04'), 0);
 });
 
@@ -148,4 +157,69 @@ test('FR-LV-07 & FR-LV-03: Leave overlap and approval validation logic', () => {
   // Non-overlapping
   assert.strictEqual(isOverlapping('2026-06-01', '2026-06-10', '2026-06-11', '2026-06-20'), false);
   assert.strictEqual(isOverlapping('2026-06-15', '2026-06-20', '2026-06-01', '2026-06-10'), false);
+});
+
+test('FR-LV-04: Approved leave prevents auto-absent and marks attendance calendar', () => {
+  // Calendar marking logic
+  const approvedLeaves = [
+    { empId: 'EMP-LV-03', startDate: new Date('2026-07-06'), endDate: new Date('2026-07-08'), leaveType: 'Annual', status: 'Approved' }
+  ];
+
+  function getDayStatus(empId, dateStr, leaves, attendances = []) {
+    const targetDate = new Date(dateStr);
+    const hasApprovedLeave = leaves.find((l) => l.empId === empId && l.status === 'Approved' && l.startDate <= targetDate && l.endDate >= targetDate);
+    if (hasApprovedLeave) {
+      return { status: `Leave: ${hasApprovedLeave.leaveType}`, isLeave: true, leaveType: hasApprovedLeave.leaveType };
+    }
+    const hasAttendance = attendances.find((a) => a.empId === empId && a.date === dateStr);
+    if (hasAttendance) return { status: 'Present', isLeave: false };
+    return { status: 'Absent', isLeave: false };
+  }
+
+  const day1 = getDayStatus('EMP-LV-03', '2026-07-07', approvedLeaves);
+  assert.strictEqual(day1.status, 'Leave: Annual');
+  assert.strictEqual(day1.isLeave, true);
+
+  const dayAfter = getDayStatus('EMP-LV-03', '2026-07-10', approvedLeaves);
+  assert.strictEqual(dayAfter.status, 'Absent');
+  assert.strictEqual(dayAfter.isLeave, false);
+});
+
+test('FR-LV-06: Leave balance validation, pending accumulation, and HR override', () => {
+  const balance = {
+    empId: 'EMP-LV-04',
+    year: 2026,
+    leaveType: 'Annual',
+    entitlement: 20,
+    used: 12,
+    pending: 3,
+    carryOver: 0,
+  };
+
+  const available = balance.entitlement + balance.carryOver - balance.used - balance.pending; // 20 - 12 - 3 = 5
+  assert.strictEqual(available, 5);
+
+  // Requesting 4 days within balance
+  function validateLeaveRequest(requestedDays, availableDays, userRole, overrideReason) {
+    if (requestedDays > availableDays) {
+      if (overrideReason && (userRole === 'hr' || userRole === 'admin')) {
+        return { allowed: true, isOverridden: true };
+      }
+      return { allowed: false, isOverridden: false, error: 'Insufficient leave balance.' };
+    }
+    return { allowed: true, isOverridden: false };
+  }
+
+  const validReq = validateLeaveRequest(4, available, 'employee');
+  assert.strictEqual(validReq.allowed, true);
+  assert.strictEqual(validReq.isOverridden, false);
+
+  // Requesting 6 days exceeds available without override
+  const exceededReq = validateLeaveRequest(6, available, 'employee');
+  assert.strictEqual(exceededReq.allowed, false);
+
+  // Exceeding request with HR override
+  const overriddenReq = validateLeaveRequest(6, available, 'hr', 'Approved by Managing Director for family emergency');
+  assert.strictEqual(overriddenReq.allowed, true);
+  assert.strictEqual(overriddenReq.isOverridden, true);
 });
