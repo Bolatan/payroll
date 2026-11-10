@@ -182,6 +182,7 @@ function renderNav() {
       ...(me.empId ? ['My Payslips'] : []),
       ...(can(['executive', 'approver']) ? ['Executive'] : []),
       ...(can(['tax_advisor', 'approver', 'payroll', 'executive']) ? ['Remittances'] : []),
+      'Tax Engine',
       ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)),
       ...(me.role === 'admin' ? ['Users'] : []),
       'Account'
@@ -211,6 +212,7 @@ async function show() {
   if (tab === 'My Payslips') return myPayslipsView();
   if (tab === 'Executive') return executiveView();
   if (tab === 'Remittances') return remittancesView();
+  if (tab === 'Tax Engine') return taxEngineView();
   const s = SCREENS[tab];
   let rows = [];
   try {
@@ -481,6 +483,149 @@ async function remittancesView(period = $('#remitPeriod')?.value || new Date().t
   $('#dlPaye') && ($('#dlPaye').onclick = () => dl(`/api/payroll/${period}/remittance/paye.csv`, `paye-${period}.csv`));
   $('#dlPension') && ($('#dlPension').onclick = () => dl(`/api/payroll/${period}/remittance/pension.csv`, `pension-${period}.csv`));
   $('#dlNhf') && ($('#dlNhf').onclick = () => dl(`/api/payroll/${period}/remittance/nhf.csv`, `nhf-${period}.csv`));
+}
+
+// ---- Tax Engine & PAYE Test Calculator (FR-TAX-01 to FR-TAX-09) ----
+async function taxEngineView() {
+  let rules = [];
+  try {
+    const res = await api('/api/tax/rules');
+    rules = Array.isArray(res) ? res : [];
+  } catch (e) { /* ignore */ }
+
+  $('#view').innerHTML = `<h2>Tax Engine & Statutory Reference Data</h2>
+  <div class="msg"><b>Statutory Compliance:</b> Progressive PAYE under the Nigeria Tax Act 2025 (effective 1 Jan 2026), 20% Rent Relief (capped at ₦500k), and historical PITA reference tables.</div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
+    <div class="card">
+      <h3 style="margin-top:0">Interactive PAYE Test Calculator (FR-TAX-08)</h3>
+      <p style="font-size:.9rem;color:var(--muted)">Enter monthly or annual emoluments and reliefs to inspect band-by-band progressive tax calculations for validation and training.</p>
+      <form id="taxCalcForm" style="display:grid;gap:.6rem">
+        <label>Regime / Period
+          <select id="calcRegime">
+            <option value="NTA_2025">Nigeria Tax Act 2025 (Active 2026+)</option>
+            <option value="PITA_HISTORICAL">Pre-2026 PITA Historical (with CRA)</option>
+            <option value="GRA_GH">Ghana GRA PIT</option>
+            <option value="KRA_KE">Kenya KRA PAYE</option>
+          </select>
+        </label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+          <label>Monthly Basic (₦)<input type="number" id="calcBasic" value="150000" min="0"></label>
+          <label>Monthly Housing (₦)<input type="number" id="calcHousing" value="60000" min="0"></label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+          <label>Monthly Transport (₦)<input type="number" id="calcTransport" value="40000" min="0"></label>
+          <label>Other Allowances (₦)<input type="number" id="calcOther" value="0" min="0"></label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+          <label>Annual Rent Paid (₦)<input type="number" id="calcRent" value="600000" min="0"></label>
+          <label>Rent Evidence Ref<input type="text" id="calcRentRef" value="DOC-RENT-2026"></label>
+        </div>
+        <button class="primary" style="margin-top:.4rem">Calculate PAYE Breakdown</button>
+      </form>
+    </div>
+
+    <div class="card" id="calcResultsCard">
+      <h3 style="margin-top:0">Calculation Result & Band Breakdown</h3>
+      <div id="calcResults"><p style="color:var(--muted)">Click 'Calculate PAYE Breakdown' to inspect band-by-band progressive tax results.</p></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1.5rem">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h3 style="margin:0">Reference Tax Regimes & Effective-Dated Bands (FR-TAX-01 to FR-TAX-03)</h3>
+      ${can(['tax_advisor', 'payroll', 'approver', 'auditor']) ? `<button id="btnRunRegression">Run 25-Employee Regression Pack</button>` : ''}
+    </div>
+    <div id="regressionStatus" style="margin-top:.5rem"></div>
+    <div class="scroll" style="margin-top:1rem">
+      <table>
+        <thead><tr><th>Regime</th><th>Country</th><th>Title</th><th>Effective From</th><th>Effective To</th><th>Status</th><th>Rent Relief</th><th>Exemption</th></tr></thead>
+        <tbody>
+          ${rules.map((r) => `<tr>
+            <td><b>${esc(r.regime)}</b></td>
+            <td>${esc(r.country || 'NG')}</td>
+            <td>${esc(r.title)}</td>
+            <td>${r.effectiveFrom ? new Date(r.effectiveFrom).toLocaleDateString('en-NG') : 'Open'}</td>
+            <td>${r.effectiveTo ? new Date(r.effectiveTo).toLocaleDateString('en-NG') : 'Present'}</td>
+            <td>${esc(r.status || 'Active')}</td>
+            <td>${r.rentReliefRate ? `${r.rentReliefRate * 100}% (Cap: ₦${money(r.rentReliefCap)})` : 'None'}</td>
+            <td>${r.exemptionThreshold ? `₦${money(r.exemptionThreshold)}` : 'None'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  const doCalculate = async () => {
+    const basic = Number($('#calcBasic').value) || 0;
+    const housing = Number($('#calcHousing').value) || 0;
+    const transport = Number($('#calcTransport').value) || 0;
+    const otherAllowances = Number($('#calcOther').value) || 0;
+    const annualRent = Number($('#calcRent').value) || 0;
+    const rentEvidenceRef = $('#calcRentRef').value || null;
+    const regime = $('#calcRegime').value;
+
+    try {
+      const res = await api('/api/tax/calculator', {
+        method: 'POST',
+        body: { basic, housing, transport, otherAllowances, annualRent, rentEvidenceRef, regime },
+      });
+
+      $('#calcResults').innerHTML = `
+        <div class="stats" style="grid-template-columns:repeat(2,1fr);margin-bottom:1rem">
+          <div><b>₦${money(res.annualGross / 12)}</b><span>Monthly Gross</span></div>
+          <div><b>₦${money(res.monthlyTax)}</b><span>Monthly PAYE</span></div>
+          <div><b>₦${money(res.chargeable)}</b><span>Annual Chargeable</span></div>
+          <div><b>${res.effectiveTaxRate}%</b><span>Effective Tax Rate</span></div>
+        </div>
+        <div style="font-size:.85rem;margin-bottom:.8rem">
+          <b>Reliefs & Allowable Deductions:</b><br>
+          • Pension & NHF Deductions: ₦${money(res.allowableDeductions)}/yr<br>
+          • Rent Relief: ₦${money(res.rentRelief)}/yr ${res.rentReliefEligible ? '(Eligible)' : '(No Evidence)'}<br>
+          ${res.cra > 0 ? `• Consolidated Relief Allowance (CRA): ₦${money(res.cra)}/yr<br>` : ''}
+          • Total Reliefs: ₦${money(res.totalReliefs)}/yr
+        </div>
+        <h4>Progressive Contiguous Bands</h4>
+        <table>
+          <thead><tr><th>Band</th><th>Bounds</th><th class="num">Rate</th><th class="num">Taxable in Band</th><th class="num">Tax</th></tr></thead>
+          <tbody>
+            ${(res.bands || []).map((b) => `<tr>
+              <td>${esc(b.name || `Band ${b.bandNumber}`)}</td>
+              <td>${esc(b.lowerBound != null ? `₦${money(b.lowerBound)}` : '')} - ${b.upTo === 'Above' || b.upTo === Infinity ? 'Above' : `₦${money(b.upTo)}`}</td>
+              <td class="num">${(b.rate * 100).toFixed(1)}%</td>
+              <td class="num">₦${money(b.taxableInBand)}</td>
+              <td class="num"><b>₦${money(b.tax)}</b></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (err) {
+      $('#calcResults').innerHTML = `<p style="color:var(--danger)">Error: ${esc(err.message)}</p>`;
+    }
+  };
+
+  $('#taxCalcForm').onsubmit = (e) => {
+    e.preventDefault();
+    doCalculate();
+  };
+
+  // Run initial calculation for sample employee
+  doCalculate();
+
+  const regBtn = $('#btnRunRegression');
+  if (regBtn) {
+    regBtn.onclick = async () => {
+      $('#regressionStatus').innerHTML = '<em>Running 25-employee regression test pack...</em>';
+      try {
+        const rep = await api('/api/tax/regression?regime=' + encodeURIComponent($('#calcRegime').value));
+        $('#regressionStatus').innerHTML = `<div class="msg ${rep.allPassed ? '' : 'warn'}">
+          <b>Regression Test Pack Complete:</b> ${rep.passed} of ${rep.total} reference test cases passed. Status: <b>${rep.allPassed ? 'ALL PASSED (100% Match)' : 'VARIANCE DETECTED'}</b>
+        </div>`;
+      } catch (err) {
+        $('#regressionStatus').innerHTML = `<div class="msg warn">Regression run failed: ${esc(err.message)}</div>`;
+      }
+    };
+  }
 }
 
 // ---- Employee Self-Service (ESS) View ----
