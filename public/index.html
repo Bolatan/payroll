@@ -201,7 +201,10 @@ async function show() {
   if (tab === 'Remittances') return remittancesView();
   const s = SCREENS[tab];
   let rows = [];
-  try { rows = await api(s.path); } catch (e) { return say(esc(e.message), 'err'); }
+  try {
+    const res = await api(s.path);
+    rows = Array.isArray(res) ? res : [];
+  } catch (e) { return say(esc(e.message), 'err'); }
 
   let extraActions = '';
   if (tab === 'Time-Clock' && can(['payroll'])) {
@@ -236,7 +239,7 @@ async function show() {
   let empOptionsHtml = '';
   if (Array.isArray(s.fields) && s.fields.some(([k]) => k === 'empId') && tab !== 'Employees') {
     const emps = await getEmployeesList();
-    empOptionsHtml = `<option value="">Select Employee...</option>` + emps.map((e) =>
+    empOptionsHtml = `<option value="">Select Employee...</option>` + (Array.isArray(emps) ? emps : []).map((e) =>
       `<option value="${esc(e.empId)}">${esc(e.empId)} - ${esc(e.surname)} ${esc(e.firstName)} (${esc(e.department || 'General')})</option>`
     ).join('');
   }
@@ -369,7 +372,10 @@ const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' :
 // ---- Dedicated Stakeholder Views: My Payslips, Executive Dashboard, Remittances ----
 async function myPayslipsView() {
   let slips = [];
-  try { slips = await api('/api/me/payslips'); } catch (e) { return say(esc(e.message), 'err'); }
+  try {
+    const res = await api('/api/me/payslips');
+    slips = Array.isArray(res) ? res : [];
+  } catch (e) { return say(esc(e.message), 'err'); }
   $('#view').innerHTML = `<h2>My Payslips</h2>
   <div class="card scroll">${slips.length ? `<table><thead><tr><th>Period</th><th>Employee</th><th class="num">Gross Pay</th><th class="num">Net Pay</th><th>Approval Date</th><th></th></tr></thead><tbody>` +
     slips.map((s) => `<tr><td><b>${esc(s.period)}</b></td><td>${esc(s.name)}</td><td class="num">${money(s.gross)}</td><td class="num"><b>${money(s.netPay)}</b></td><td>${s.approvedAt ? new Date(s.approvedAt).toLocaleDateString('en-NG') : ''}</td><td><button class="primary" data-period="${esc(s.period)}">View payslip</button></td></tr>`).join('') +
@@ -467,7 +473,8 @@ async function essView() {
   let profile = null, slips = [];
   try {
     profile = await api('/api/ess/profile');
-    slips = await api('/api/ess/payslips');
+    const res = await api('/api/ess/payslips');
+    slips = Array.isArray(res) ? res : [];
   } catch (e) { return say(esc(e.message), 'err'); }
 
   $('#view').innerHTML = `<h2>Employee Self-Service (ESS)</h2>
@@ -521,16 +528,19 @@ function accountView() {
 
 async function usersView() {
   let rows = [];
-  try { rows = await api('/api/users'); } catch (e) { return say(esc(e.message), 'err'); }
+  try {
+    const res = await api('/api/users');
+    rows = Array.isArray(res) ? res : [];
+  } catch (e) { return say(esc(e.message), 'err'); }
   const emps = await getEmployeesList();
-  const empSelectOptions = `<option value="">None (Non-ESS)</option>` + emps.map((e) =>
+  const empSelectOptions = `<option value="">None (Non-ESS)</option>` + (Array.isArray(emps) ? emps : []).map((e) =>
     `<option value="${esc(e.empId)}">${esc(e.empId)} - ${esc(e.surname)} ${esc(e.firstName)}</option>`
   ).join('');
 
   const roles = ['admin', 'hr', 'payroll', 'approver', 'supervisor', 'executive', 'auditor', 'tax_advisor', 'employee'];
   $('#view').innerHTML = `<h2>Users</h2>
   <form class="card" id="uf"><h3 style="grid-column:1/-1;margin:0">Add user</h3>
-    <label>Username<input name="username" required pattern="[a-zA-Z0-9._-]{3,30}"></label>
+    <label>Username<input name="username" required pattern="[a-zA-Z0-9._\-]{3,30}"></label>
     <label>Full name<input name="name" required></label>
     <label>Role<select name="role">${roles.map((r) => `<option>${r}</option>`).join('')}</select></label>
     <label>Employee ID (if ESS user)<select name="empId">${empSelectOptions}</select></label>
