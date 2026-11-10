@@ -139,8 +139,8 @@ const SCREENS = {
     fields: [['empId', 'Employee ID'], ['type', 'Type', 'select', ['cooperative', 'union_dues', 'damages', 'salary_advance', 'other']], ['title', 'Title / Description'], ['amount', 'Amount', 'number'], ['recurring', 'Recurring', 'check'], ['startPeriod', 'Start Period', 'month'], ['endPeriod', 'End Period', 'month'], ['reason', 'Reason']],
     cols: ['empId', 'type', 'title', 'amount', 'recurring', 'startPeriod', 'endPeriod', 'status'], pending: (r) => r.status === 'Pending' },
   Adjustments: { path: '/api/adjustments', roles: ['payroll', 'approver', 'hr', 'auditor'], write: ['payroll', 'hr'], approve: ['approver'],
-    fields: [['period', 'Period', 'month'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['amount', 'Amount', 'number'], ['reason', 'Reason']],
-    cols: ['period', 'empId', 'type', 'amount', 'reason', 'approved'] },
+    fields: [['period', 'Period', 'month'], ['empId', 'Employee ID'], ['type', 'Type', 'select', ['bonus', 'earning', 'deduction']], ['subtype', 'Category', 'select', ['general', 'arrears', 'back_pay', 'bonus', 'absence', 'damage', 'advance', 'other']], ['priorPeriod', 'Prior Period (for arrears/back-pay)', 'month'], ['amount', 'Amount', 'number'], ['reason', 'Reason (Mandatory)']],
+    cols: ['period', 'empId', 'type', 'subtype', 'priorPeriod', 'amount', 'reason', 'approved'] },
   Recruitment: { path: '/api/recruitment', roles: ['hr', 'approver'], write: ['hr'],
     fields: [['fullName', 'Full Name'], ['email', 'Email'], ['phone', 'Phone'], ['position', 'Position'], ['department', 'Department'], ['offeredSalary', 'Offered Salary', 'number']],
     cols: ['candidateId', 'fullName', 'position', 'department', 'offeredSalary', 'stage'] },
@@ -593,31 +593,57 @@ async function usersView() {
 // ---- payroll ----
 async function payrollView(period = $('#period')?.value || new Date().toISOString().slice(0, 7)) {
   let run = null;
+  let validation = null;
   try { run = await api(`/api/payroll/${period}`); } catch (e) { /* none yet */ }
+  try { validation = await api(`/api/payroll/${period}/exceptions`); } catch (e) { /* none yet */ }
   const t = run?.totals;
-  $('#view').innerHTML = `<h2>Payroll</h2>
+  const isLocked = run && ['Approved', 'Paid/Locked'].includes(run.status);
+  const statusDisplay = run?.status || 'Open (Not Run)';
+
+  $('#view').innerHTML = `<h2>Payroll (${esc(period)})</h2>
   <div class="bar noprint"><label>Period<input id="period" type="month" value="${period}"></label>
-    ${can(['payroll']) ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
-    ${can(['approver']) && run?.status === 'Draft' ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
-    ${run?.status === 'Approved' && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}
-    ${run?.status === 'Approved' && can(['payroll', 'approver']) ? '<button id="postGL" class="primary">Post GL Journal</button>' : ''}
-    ${run?.status === 'Approved' && can(['payroll', 'approver']) ? '<button id="initiateBank">Direct Bank Transfer</button>' : ''}</div>
-  ${run ? `<div class="msg ${run.status === 'Approved' ? '' : 'warn'}">${run.status === 'Approved' ? `Approved by ${esc(run.approvedBy)}. This period is locked.` : `Draft prepared by ${esc(run.preparedBy)}. Not yet approved.`}
-  ${run.glPosted ? `<br><b>GL Journal Posted:</b> ${esc(run.glJournalId)}` : ''}
-  ${run.bankPaymentInitiated ? `<br><b>Bank Payment Dispatched:</b> ${esc(run.paymentReference)}` : ''}
+    ${can(['payroll']) && !isLocked ? '<button id="prepInputs">Prepare Inputs</button>' : ''}
+    ${can(['payroll']) && !isLocked ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
+    ${can(['approver', 'executive']) && !isLocked ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="postGL" class="primary">Post GL Journal</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="initiateBank">Direct Bank Transfer</button>' : ''}</div>
+  <div class="msg ${isLocked ? '' : (run ? 'warn' : '')}">
+    <b>State:</b> ${esc(statusDisplay)}${run?.preparedBy ? ` | Prepared by ${esc(run.preparedBy)}` : ''}${run?.approvedBy ? ` | Approved by ${esc(run.approvedBy)}` : ''}
+    ${run?.glPosted ? `<br><b>GL Journal Posted:</b> ${esc(run.glJournalId)}` : ''}
+    ${run?.bankPaymentInitiated ? `<br><b>Bank Payment Dispatched:</b> ${esc(run.paymentReference)}` : ''}
   </div>
-  ${run.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}
+  ${run?.warnings?.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('') || ''}
+  ${validation && validation.exceptions?.length ? `
+    <div class="card" style="margin-bottom:1rem;border-left:4px solid var(--danger)">
+      <h3 style="margin-top:0;color:var(--danger)">Pre-Calculation Exceptions (${validation.blockingCount} blocking)</h3>
+      <ul style="margin:0;padding-left:1.2rem">
+        ${validation.exceptions.map((x) => `<li><b class="${x.blocking ? 'flag' : ''}">[${esc(x.type)}]</b> ${esc(x.message)}</li>`).join('')}
+      </ul>
+    </div>
+  ` : ''}
+  ${run && t ? `
   <div class="stats">${[['Employees', t.employees], ['Gross pay', money(t.gross)], ['PAYE', money(t.paye)], ['Pension (employee)', money(t.pension)], ['Employer Pension', money(t.employerPension)], ['Net pay', money(t.net)]].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
   <div class="card scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Country</th><th>Dept</th><th class="num">Basic</th><th class="num">OT pay</th><th class="num">Bonus</th><th class="num">Gross</th><th class="num">Pension</th><th class="num">NHF</th><th class="num">PAYE</th><th class="num">Loan</th><th class="num">Other</th><th class="num">Net</th><th></th></tr></thead><tbody>` +
-    run.lines.map((l) => `<tr><td>${esc(l.empId)}</td><td>${esc(l.name)}</td><td>${esc(l.country || 'NG')}</td><td>${esc(l.department)}</td>${['basic', 'otPay', 'bonuses', 'gross', 'pension', 'nhf', 'paye', 'loanDeduction', 'otherDeductions', 'netPay'].map((k) => `<td class="num">${money(l[k])}</td>`).join('')}<td>${l.flags.length ? `<span class="flag">${l.flags.join(', ')}</span> ` : ''}<button data-slip="${esc(l.empId)}">Payslip</button></td></tr>`).join('') + '</tbody></table></div>'
-    : `<p style="color:var(--muted)">No payroll for ${period} yet. Choose Calculate payroll to build it from approved attendance, adjustments and active loans.</p>`}`;
+    (run.lines || []).map((l) => `<tr><td>${esc(l.empId)}</td><td>${esc(l.name)}</td><td>${esc(l.country || 'NG')}</td><td>${esc(l.department)}</td>${['basic', 'otPay', 'bonuses', 'gross', 'pension', 'nhf', 'paye', 'loanDeduction', 'otherDeductions', 'netPay'].map((k) => `<td class="num">${money(l[k])}</td>`).join('')}<td>${l.flags.length ? `<span class="flag">${l.flags.join(', ')}</span> ` : ''}<button data-slip="${esc(l.empId)}">Payslip</button></td></tr>`).join('') + '</tbody></table></div>'
+    : `<p style="color:var(--muted)">No payroll calculated for ${period} yet. Choose "Prepare Inputs" to assemble inputs, or "Calculate payroll" to run gross-to-net.</p>`}`;
 
   $('#period').onchange = () => payrollView($('#period').value);
+  $('#prepInputs') && ($('#prepInputs').onclick = async () => {
+    try {
+      const res = await api(`/api/payroll/${$('#period').value}/prepare-inputs`, { method: 'POST' });
+      say(`Prepared inputs for ${res.inputsCount} employees. State: ${res.status}.`);
+      payrollView($('#period').value);
+    } catch (e) { say(esc(e.message), 'err'); }
+  });
   $('#calc') && ($('#calc').onclick = async () => { try { await api(`/api/payroll/${$('#period').value}/calculate`, { method: 'POST' }); say('Payroll calculated.'); payrollView($('#period').value); } catch (e) { say(esc(e.message), 'err'); } });
   $('#appr') && ($('#appr').onclick = async () => {
     if (!confirm('Approve and lock this period? Loan balances will be updated and it cannot be edited afterwards.')) return;
     try { await api(`/api/payroll/${period}/approve`, { method: 'POST' }); say('Payroll approved and locked.'); payrollView(period); }
-    catch (e) { say(esc(e.message) + (e.data?.exceptions ? '<br>' + e.data.exceptions.map((x) => `${esc(x.empId)}: ${x.flags.join(', ')}`).join('<br>') : ''), 'err'); }
+    catch (e) {
+      const detail = e.data?.exceptions ? '<br>' + e.data.exceptions.map((x) => `${esc(x.empId || '')}: ${x.message || (Array.isArray(x.flags) ? x.flags.join(', ') : '')}`).join('<br>') : '';
+      say(esc(e.message) + detail, 'err');
+    }
   });
   $('#bank') && ($('#bank').onclick = async () => {
     try { const r = await api(`/api/payroll/${period}/bank.csv`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
