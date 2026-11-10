@@ -191,10 +191,21 @@ def test_us07_and_us08_overtime_pay():
 
 def test_us13_ac1_loan_final_instalment_no_over_recovery():
     """
-    US-13 AC1:
+    US-13 AC1 & FR-LN-01, FR-LN-05:
     Outstanding is ₦12,500 and monthly instalment is ₦20,000.
     Deduction must be ₦12,500.
+    Also tests Loan.calculate_monthly_deduction with no interest, flat, and monthly interest.
     """
+    # FR-LN-01 formula testing
+    no_int = Loan.calculate_monthly_deduction(Decimal('120000.00'), 12, Decimal('0.00'), 'none')
+    assert no_int == Decimal('10000.00')
+
+    flat_int = Loan.calculate_monthly_deduction(Decimal('120000.00'), 12, Decimal('0.10'), 'flat')
+    assert flat_int == Decimal('11000.00')
+
+    monthly_int = Loan.calculate_monthly_deduction(Decimal('120000.00'), 12, Decimal('0.01'), 'monthly')
+    assert monthly_int == Decimal('11200.00')
+
     emp = Employee(
         emp_id="EMP005",
         surname="Danladi",
