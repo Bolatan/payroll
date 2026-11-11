@@ -169,7 +169,7 @@ const SCREENS = {
   'Public Holidays': { path: '/api/holidays', roles: ['admin', 'hr', 'payroll', 'approver'], write: ['admin', 'hr'],
     fields: [['date', 'Holiday Date', 'date'], ['name', 'Holiday Name']],
     cols: ['date', 'name'] },
-  Audit: { path: '/api/audit', roles: ['approver', 'auditor', 'admin'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
+  Audit: { path: '/api/audit', roles: ['auditor', 'admin'], readOnly: true, cols: ['ts', 'user', 'action', 'entity', 'entityId'] },
 };
 
 const can = (list) => me.role === 'admin' || list.includes(me.role);
@@ -299,6 +299,7 @@ async function show() {
   if (tab === 'My Payslips') return myPayslipsView();
   if (tab === 'Executive') return executiveView();
   if (tab === 'Remittances') return remittancesView();
+  if (tab === 'Audit') return auditView();
   const s = SCREENS[tab];
   let rows = [];
   try {
@@ -471,6 +472,107 @@ async function show() {
 }
 
 const fmt = (c, v) => v === true ? 'Yes' : v === false ? 'No' : v == null ? '' : /^(basic|amount|monthly|outstanding|offeredSalary|totalAmount|totalDebit|totalCredit)$/.test(c) ? money(v) : /^(date|ts|timestamp|postDate|startDate|endDate|effectiveDate)$/.test(c) ? new Date(v).toLocaleDateString('en-NG') : esc(v);
+
+// ---- Audit Log View (FR-AUD-01 to FR-AUD-05) ----
+async function auditView() {
+  const startDate = $('#auditStartDate')?.value || '';
+  const endDate = $('#auditEndDate')?.value || '';
+  const userFilter = $('#auditUser')?.value || '';
+  const actionFilter = $('#auditAction')?.value || '';
+  const empIdFilter = $('#auditEmpId')?.value || '';
+  const searchFilter = $('#auditSearch')?.value || '';
+
+  const q = new URLSearchParams();
+  if (startDate) q.set('startDate', startDate);
+  if (endDate) q.set('endDate', endDate);
+  if (userFilter) q.set('user', userFilter);
+  if (actionFilter) q.set('action', actionFilter);
+  if (empIdFilter) q.set('empId', empIdFilter);
+  if (searchFilter) q.set('search', searchFilter);
+
+  let logs = [];
+  try {
+    const res = await api(`/api/audit?${q.toString()}`);
+    logs = Array.isArray(res) ? res : [];
+  } catch (e) { return say(esc(e.message), 'err'); }
+
+  const emps = await getEmployeesList();
+  const empOpts = `<option value="">All Employees</option>` + (Array.isArray(emps) ? emps : []).map((e) =>
+    `<option value="${esc(e.empId)}" ${empIdFilter === e.empId ? 'selected' : ''}>${esc(e.empId)} - ${esc(e.surname)} ${esc(e.firstName)}</option>`
+  ).join('');
+
+  $('#view').innerHTML = `<h2>Audit Log</h2>
+  <div class="msg">Append-only audit trail retained for at least 6 years. Access restricted to Auditor and Admin roles.</div>
+  <div class="card noprint" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:.6rem;align-items:end;margin-bottom:1rem">
+    <label>Start Date<input id="auditStartDate" type="date" value="${esc(startDate)}"></label>
+    <label>End Date<input id="auditEndDate" type="date" value="${esc(endDate)}"></label>
+    <label>User<input id="auditUser" placeholder="e.g. admin" value="${esc(userFilter)}"></label>
+    <label>Action<input id="auditAction" placeholder="e.g. approve, login" value="${esc(actionFilter)}"></label>
+    <label>Employee<select id="auditEmpId">${empOpts}</select></label>
+    <label>Search<input id="auditSearch" placeholder="Search keywords..." value="${esc(searchFilter)}"></label>
+    <div>
+      <button id="filterAuditBtn" class="primary" style="margin-right:.4rem">Filter</button>
+      <button id="resetAuditBtn">Reset</button>
+    </div>
+  </div>
+  <div class="bar noprint">
+    <button id="exportAuditCsvBtn">Export CSV</button>
+    <button id="exportAuditXlsxBtn">Export XLSX</button>
+    <span style="font-size:.85rem;color:var(--muted)">Showing <b>${logs.length}</b> records</span>
+  </div>
+  <div class="card scroll">
+    ${logs.length ? `<table>
+      <thead>
+        <tr>
+          <th>Date-Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Entity</th>
+          <th>Record ID</th>
+          <th>EmpID</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>` +
+      logs.map((l) => `<tr>
+        <td>${l.ts ? new Date(l.ts).toLocaleString('en-NG') : ''}</td>
+        <td><b>${esc(l.user)}</b></td>
+        <td><span class="flag" style="background:var(--subtle);color:inherit">${esc(l.action)}</span></td>
+        <td>${esc(l.entity)}</td>
+        <td>${esc(l.entityId || '')}</td>
+        <td>${esc(l.empId || '')}</td>
+        <td style="font-size:.82rem;font-family:monospace;max-width:320px;white-space:pre-wrap;word-break:break-word">${esc(JSON.stringify(l.details || {}))}</td>
+      </tr>`).join('') +
+      `</tbody></table>` : `<p style="color:var(--muted)">No audit log entries matching criteria.</p>`}
+  </div>`;
+
+  $('#filterAuditBtn').onclick = () => auditView();
+  $('#resetAuditBtn').onclick = () => {
+    $('#auditStartDate').value = '';
+    $('#auditEndDate').value = '';
+    $('#auditUser').value = '';
+    $('#auditAction').value = '';
+    $('#auditEmpId').value = '';
+    $('#auditSearch').value = '';
+    auditView();
+  };
+
+  const dlExport = async (format) => {
+    try {
+      const exportQ = new URLSearchParams(q);
+      exportQ.set('format', format);
+      const r = await api(`/api/audit/export?${exportQ.toString()}`, { raw: true });
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.click();
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+
+  $('#exportAuditCsvBtn').onclick = () => dlExport('csv');
+  $('#exportAuditXlsxBtn').onclick = () => dlExport('xlsx');
+}
 
 // ---- Dedicated Stakeholder Views: My Payslips, Executive Dashboard, Remittances ----
 async function myPayslipsView() {
