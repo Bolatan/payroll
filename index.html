@@ -185,6 +185,7 @@ function renderNav() {
       ...(can(['payroll', 'approver', 'hr', 'executive', 'auditor']) ? ['Payroll'] : []),
       ...(me.empId ? ['My Payslips'] : []),
       ...(can(['executive', 'approver']) ? ['Executive'] : []),
+      ...(can(['payroll', 'approver', 'hr', 'auditor', 'executive', 'tax_advisor']) ? ['Reports'] : []),
       ...(can(['tax_advisor', 'approver', 'payroll', 'executive']) ? ['Remittances'] : []),
       ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)),
       ...(me.role === 'admin' ? ['Users'] : []),
@@ -298,6 +299,7 @@ async function show() {
   if (tab === 'Self-Service') return essView();
   if (tab === 'My Payslips') return myPayslipsView();
   if (tab === 'Executive') return executiveView();
+  if (tab === 'Reports') return reportsView();
   if (tab === 'Remittances') return remittancesView();
   if (tab === 'Audit') return auditView();
   const s = SCREENS[tab];
@@ -614,6 +616,30 @@ async function executiveView(period = $('#execPeriod')?.value || new Date().toIS
     <div><b>₦${money(k.pensionTotal)}</b><span>Total Pension (18%)</span></div>
     <div><b>₦${money(k.totalNHF)}</b><span>Total NHF (2.5%)</span></div>
   </div>
+  ${data.reconciliation ? `
+  <div class="card">
+    <h3 style="margin-top:0">Payroll Register Exact Reconciliation (FR-DSH-04)</h3>
+    <div class="msg ${data.reconciliation.balanced ? '' : 'err'}">Reconciliation Status: <b>${data.reconciliation.balanced ? '100% RECONCILED / BALANCED' : 'OUT OF BALANCE (' + data.reconciliation.errorCount + ' mismatches)'}</b></div>
+    <div class="scroll"><table><thead><tr><th>Verification Check</th><th class="num">Register Sum</th><th class="num">Dashboard KPI</th><th class="num">Diff</th><th>Result</th></tr></thead><tbody>` +
+    data.reconciliation.checks.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${money(c.registerValue)}</td><td class="num">${money(c.dashboardValue)}</td><td class="num">${money(c.difference)}</td><td><span class="${c.passed ? 'flag' : 'flag'}" style="color:${c.passed ? 'var(--accent)' : 'var(--danger)'}"><b>${c.passed ? '✓ Balanced' : '✗ Discrepancy'}</b></span></td></tr>`).join('') +
+    `</tbody></table></div>
+  </div>` : ''}
+
+  ${data.trends && data.trends.series && data.trends.series.length ? `
+  <div class="card">
+    <h3 style="margin-top:0">Period-over-Period Trends (FR-DSH-03)</h3>
+    ${data.trends.varianceSummary ? `
+    <div class="stats" style="margin-bottom:.8rem">
+      <div><b>₦${money(data.trends.varianceSummary.gross.difference)} (${data.trends.varianceSummary.gross.percentageChange}%)</b><span>Gross vs ${esc(data.trends.varianceSummary.priorPeriod)}</span></div>
+      <div><b>₦${money(data.trends.varianceSummary.net.difference)} (${data.trends.varianceSummary.net.percentageChange}%)</b><span>Net vs ${esc(data.trends.varianceSummary.priorPeriod)}</span></div>
+      <div><b>₦${money(data.trends.varianceSummary.overtime.difference)} (${data.trends.varianceSummary.overtime.percentageChange}%)</b><span>OT vs ${esc(data.trends.varianceSummary.priorPeriod)}</span></div>
+      <div><b>₦${money(data.trends.varianceSummary.paye.difference)} (${data.trends.varianceSummary.paye.percentageChange}%)</b><span>PAYE vs ${esc(data.trends.varianceSummary.priorPeriod)}</span></div>
+    </div>` : ''}
+    <div class="scroll"><table><thead><tr><th>Period</th><th>Status</th><th class="num">Headcount</th><th class="num">Gross Pay</th><th class="num">Net Pay</th><th class="num">Overtime Pay</th><th class="num">PAYE Tax</th></tr></thead><tbody>` +
+    data.trends.series.map((s) => `<tr style="${s.period === data.period ? 'background:var(--subtle);font-weight:600' : ''}"><td><b>${esc(s.period)}</b></td><td>${esc(s.status || '')}</td><td class="num">${s.headcount}</td><td class="num">${money(s.gross)}</td><td class="num">${money(s.net)}</td><td class="num">${money(s.otPay)}</td><td class="num">${money(s.paye)}</td></tr>`).join('') +
+    `</tbody></table></div>
+  </div>` : ''}
+
   <div class="card">
     <h3 style="margin-top:0">Department Cost Breakdown</h3>
     <div class="scroll"><table><thead><tr><th>Department</th><th class="num">Staff Count</th><th class="num">Gross Pay</th><th class="num">Overtime Pay</th><th class="num">Net Pay</th><th class="num">Total Employer Cost</th></tr></thead><tbody>` +
@@ -671,6 +697,85 @@ async function remittancesView(period = $('#remitPeriod')?.value || new Date().t
   $('#dlPaye') && ($('#dlPaye').onclick = () => dl(`/api/payroll/${period}/remittance/paye.csv`, `paye-${period}.csv`));
   $('#dlPension') && ($('#dlPension').onclick = () => dl(`/api/payroll/${period}/remittance/pension.csv`, `pension-${period}.csv`));
   $('#dlNhf') && ($('#dlNhf').onclick = () => dl(`/api/payroll/${period}/remittance/nhf.csv`, `nhf-${period}.csv`));
+}
+
+// ---- Standard Reports Center (FR-DSH-05, FR-DSH-06) ----
+const STANDARD_REPORTS = [
+  { id: 'payroll-register', name: 'Payroll Register', desc: '16-column register with earnings, deductions, net pay and subtotals' },
+  { id: 'payslips', name: 'Payslips Summary', desc: 'Batch payslips with gross, total deductions, and net payouts' },
+  { id: 'paye-remittance', name: 'PAYE Remittance Schedule', desc: 'State-by-state PAYE statutory tax schedule' },
+  { id: 'pension-remittance', name: 'Pension Remittance Schedule', desc: 'Employee (8%) and Employer (10%) PRA 2014 schedule' },
+  { id: 'nhf-remittance', name: 'NHF Remittance Schedule', desc: 'National Housing Fund 2.5% statutory deductions' },
+  { id: 'bank-schedule', name: 'Bank Transfer Schedule', desc: 'Bank disbursement schedule with 10-digit NUBAN and net pay' },
+  { id: 'overtime-report', name: 'Overtime Cost & Hours Report', desc: 'Itemized overtime hours, shift multipliers, and pay costs' },
+  { id: 'loan-ledger', name: 'Loan Repayment Ledger', desc: 'Loan deductions, principal recoveries, and outstanding balances' },
+  { id: 'leave-report', name: 'Leave Management Report', desc: 'Leave requests, taken days, and balance tracking' },
+  { id: 'bonus-report', name: 'Bonus Register Report', desc: 'Performance, attendance, and production bonuses breakdown' },
+  { id: 'variance-report', name: 'Period Variance Report', desc: 'Period-over-period gross and net payroll variance analysis' },
+  { id: 'exceptions-report', name: 'Exceptions & Flags Report', desc: 'Pre-calculation exceptions, anomaly flags, and missing data' },
+  { id: 'audit-report', name: 'Audit Trail Report', desc: 'Append-only audit trail and compliance history' },
+  { id: 'employer-cost', name: 'Employer Cost Report', desc: 'Total employer cost including pension (10%), NSITF (1%), and ITF (1%)' },
+];
+
+async function reportsView(period = $('#repPeriod')?.value || new Date().toISOString().slice(0, 7), repId = $('#repTypeSelect')?.value || 'payroll-register') {
+  let data = null;
+  try {
+    data = await api(`/api/reports/${repId}?period=${period}&format=json`);
+  } catch (err) {
+    data = { title: 'Standard Report', subtitle: `Period: ${period}`, headers: [], rows: [], summary: err.message };
+  }
+
+  const opts = STANDARD_REPORTS.map((r) => `<option value="${r.id}" ${r.id === repId ? 'selected' : ''}>${r.name}</option>`).join('');
+
+  $('#view').innerHTML = `<h2>Standard Reports Center</h2>
+  <div class="msg">Generate and export official factory payroll and HR compliance reports (FR-DSH-05, FR-DSH-06).</div>
+  <div class="card noprint" style="display:flex;gap:.8rem;align-items:end;flex-wrap:wrap">
+    <label>Report Type<select id="repTypeSelect">${opts}</select></label>
+    <label>Period<input id="repPeriod" type="month" value="${period}"></label>
+    <div>
+      <button id="dlRepCsv" class="primary">Export CSV</button>
+      <button id="dlRepXlsx">Export XLSX</button>
+      <button id="dlRepPdf">Export PDF</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding-bottom:.5rem;margin-bottom:.8rem">
+      <div>
+        <h3 style="margin:0">${esc(data.title)}</h3>
+        <span style="color:var(--muted);font-size:.85rem">${esc(data.subtitle)}</span>
+      </div>
+      <div style="font-size:.85rem;color:var(--muted)">Count: <b>${data.count ?? (data.rows?.length || 0)}</b></div>
+    </div>
+    <div class="msg" style="margin-bottom:.8rem;font-size:.9rem;background:var(--subtle)"><b>Summary:</b> ${esc(data.summary || 'N/A')}</div>
+    <div class="scroll">
+      ${data.rows && data.rows.length ? `<table>
+        <thead><tr>${data.headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${data.rows.map((row) => `<tr>${row.map((c) => `<td class="${typeof c === 'number' ? 'num' : ''}">${typeof c === 'number' ? money(c) : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>` : `<p style="color:var(--muted)">No records found for this report period.</p>`}
+    </div>
+  </div>`;
+
+  $('#repTypeSelect').onchange = () => reportsView($('#repPeriod').value, $('#repTypeSelect').value);
+  $('#repPeriod').onchange = () => reportsView($('#repPeriod').value, $('#repTypeSelect').value);
+
+  const exportReport = async (fmt) => {
+    try {
+      const url = `/api/reports/${repId}?period=${period}&format=${fmt}`;
+      const r = await api(url, { raw: true });
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${repId}-${period}.${fmt}`;
+      a.click();
+    } catch (err) {
+      say(esc(err.message), 'err');
+    }
+  };
+
+  $('#dlRepCsv').onclick = () => exportReport('csv');
+  $('#dlRepXlsx').onclick = () => exportReport('xlsx');
+  $('#dlRepPdf').onclick = () => exportReport('pdf');
 }
 
 // ---- Employee Self-Service (ESS) View ----
