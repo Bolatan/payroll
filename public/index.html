@@ -605,7 +605,10 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
     ${can(['payroll']) && !isLocked ? '<button id="prepInputs">Prepare Inputs</button>' : ''}
     ${can(['payroll']) && !isLocked ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
     ${can(['approver', 'executive']) && !isLocked ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
-    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bank">Bank Schedule (CSV)</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bankXlsx">Bank Schedule (XLSX)</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bankNip">NIBSS Upload File</button>' : ''}
+    ${run && isLocked && can(['payroll', 'approver']) ? '<button id="viewBankSchedule">View Bank Schedule</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="postGL" class="primary">Post GL Journal</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="initiateBank">Direct Bank Transfer</button>' : ''}</div>
   <div class="msg ${isLocked ? '' : (run ? 'warn' : '')}">
@@ -646,7 +649,42 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
     }
   });
   $('#bank') && ($('#bank').onclick = async () => {
-    try { const r = await api(`/api/payroll/${period}/bank.csv`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
+    try { const r = await api(`/api/payroll/${period}/bank-schedule/export?format=csv&template=GENERIC_BANK`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
+  });
+  $('#bankXlsx') && ($('#bankXlsx').onclick = async () => {
+    try { const r = await api(`/api/payroll/${period}/bank-schedule/export?format=xlsx`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.xlsx`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
+  });
+  $('#bankNip') && ($('#bankNip').onclick = async () => {
+    try { const r = await api(`/api/payroll/${period}/bank-schedule/export?format=csv&template=STANDARD_NIBSS`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `nip-bulk-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
+  });
+  $('#viewBankSchedule') && ($('#viewBankSchedule').onclick = async () => {
+    try {
+      const sch = await api(`/api/payroll/${period}/bank-schedule`);
+      $('#slip').innerHTML = `<h3 style="margin-top:0">Bank Transfer Schedule (${esc(sch.period)} v${sch.version})</h3>
+      <p><b>Narration:</b> ${esc(sch.narration)} | <b>Payable Count:</b> ${sch.payableHeadcount} | <b>Control Total:</b> ${money(sch.controlTotal)} | <b>Status:</b> ${esc(sch.status)}</p>
+      ${sch.exceptions?.length ? `<div class="msg warn"><b>Excluded (${sch.exceptions.length}):</b> ` + sch.exceptions.map(x => `${esc(x.empId)} (${esc(x.reasons.join(', '))})`).join('; ') + `</div>` : ''}
+      <div class="scroll" style="max-height:300px">
+        <table><thead><tr><th>EmpID</th><th>Name</th><th>Bank</th><th>Account No</th><th class="num">Net Pay</th><th>Status</th></tr></thead>
+        <tbody>
+          ${(sch.items || []).map(i => `<tr><td>${esc(i.empId)}</td><td>${esc(i.name)}</td><td>${esc(i.bank)}</td><td>${esc(i.accountNo)}</td><td class="num">${money(i.netPay)}</td><td>${esc(i.paymentStatus)}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+      <p class="noprint" style="display:flex;gap:.5rem;margin-top:1rem">
+        <button id="regenBank" class="primary">Re-generate New Version</button>
+        <button onclick="document.querySelector('#slip').close()">Close</button>
+      </p>`;
+      const regenBtn = document.getElementById('regenBank');
+      if (regenBtn) {
+        regenBtn.onclick = async () => {
+          try {
+            await api(`/api/payroll/${period}/bank-schedule/generate`, { method: 'POST' });
+            say('New versioned bank schedule generated.');
+            $('#viewBankSchedule').click();
+          } catch (err) { say(esc(err.message), 'err'); }
+        };
+      }
+      $('#slip').showModal();
+    } catch (e) { say(esc(e.message), 'err'); }
   });
   $('#postGL') && ($('#postGL').onclick = async () => {
     try { const r = await api(`/api/payroll/${period}/post-gl`, { method: 'POST' }); say(r.message); payrollView(period); }
