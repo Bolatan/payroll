@@ -4,7 +4,7 @@ Implements all business rules BRL-01 through BRL-15 and functional requirements.
 """
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 
 def quantize_currency(amount: Decimal) -> Decimal:
@@ -208,6 +208,9 @@ class PayrollResult:
     other_deductions: Decimal
     net_pay: Decimal
     is_negative_blocked: bool = False
+    nhf_base: Decimal = Decimal('0.00')
+    taxable_gross: Decimal = Decimal('0.00')
+    tax_bands: List[Dict[str, Any]] = field(default_factory=list)
 
 class PayrollCalculator:
     """
@@ -307,57 +310,55 @@ class PayrollCalculator:
         return quantize_currency(total_ot)
 
     @staticmethod
-    def calculate_nta2025_tax(annual_chargeable_income: Decimal) -> Decimal:
+    def calculate_nta2025_tax_bands(annual_chargeable_income: Decimal) -> Tuple[Decimal, List[Dict[str, Any]]]:
         """
-        FR-TAX-03 & BRL-05: Nigeria Tax Act 2025 Progressive Tax Bands:
-        - First 800,000 @ 0%
-        - Next 2,200,000 (800,001 - 3,000,000) @ 15%
-        - Next 9,000,000 (3,000,001 - 12,000,000) @ 18%
-        - Next 13,000,000 (12,000,001 - 25,000,000) @ 21%
-        - Next 25,000,000 (25,000,001 - 50,000,000) @ 23%
-        - Above 50,000,000 @ 25%
+        FR-TAX-03, FR-PAY-07 & BRL-05: Nigeria Tax Act 2025 Progressive Tax Bands:
+        - Band 1: First 800,000 @ 0%
+        - Band 2: Next 2,200,000 (800,001 - 3,000,000) @ 15%
+        - Band 3: Next 9,000,000 (3,000,001 - 12,000,000) @ 18%
+        - Band 4: Next 13,000,000 (12,000,001 - 25,000,000) @ 21%
+        - Band 5: Next 25,000,000 (25,000,001 - 50,000,000) @ 23%
+        - Band 6: Above 50,000,000 @ 25%
         """
-        if annual_chargeable_income <= Decimal('800000'):
-            return Decimal('0.00')
+        bands_def = [
+            (Decimal('0'), Decimal('800000'), Decimal('0.00')),
+            (Decimal('800000'), Decimal('3000000'), Decimal('0.15')),
+            (Decimal('3000000'), Decimal('12000000'), Decimal('0.18')),
+            (Decimal('12000000'), Decimal('25000000'), Decimal('0.21')),
+            (Decimal('25000000'), Decimal('50000000'), Decimal('0.23')),
+            (Decimal('50000000'), Decimal('Infinity'), Decimal('0.25')),
+        ]
+        total_tax = Decimal('0.00')
+        breakdown = []
+        for idx, (lower, upper, rate) in enumerate(bands_def, start=1):
+            if annual_chargeable_income <= lower:
+                breakdown.append({
+                    "band": idx,
+                    "lower": lower,
+                    "upper": upper,
+                    "rate": rate,
+                    "taxable_in_band": Decimal('0.00'),
+                    "tax": Decimal('0.00'),
+                })
+            else:
+                top = min(annual_chargeable_income, upper)
+                taxable = quantize_currency(top - lower)
+                btax = quantize_currency(taxable * rate)
+                total_tax = quantize_currency(total_tax + btax)
+                breakdown.append({
+                    "band": idx,
+                    "lower": lower,
+                    "upper": upper,
+                    "rate": rate,
+                    "taxable_in_band": taxable,
+                    "tax": btax,
+                })
+        return total_tax, breakdown
 
-        rem = annual_chargeable_income - Decimal('800000')
-        tax = Decimal('0.00')
-
-        # Band 2: up to 2,200,000 @ 15%
-        band2_width = Decimal('2200000')
-        if rem <= band2_width:
-            tax += rem * Decimal('0.15')
-            return quantize_currency(tax)
-        tax += band2_width * Decimal('0.15')
-        rem -= band2_width
-
-        # Band 3: up to 9,000,000 @ 18%
-        band3_width = Decimal('9000000')
-        if rem <= band3_width:
-            tax += rem * Decimal('0.18')
-            return quantize_currency(tax)
-        tax += band3_width * Decimal('0.18')
-        rem -= band3_width
-
-        # Band 4: up to 13,000,000 @ 21%
-        band4_width = Decimal('13000000')
-        if rem <= band4_width:
-            tax += rem * Decimal('0.21')
-            return quantize_currency(tax)
-        tax += band4_width * Decimal('0.21')
-        rem -= band4_width
-
-        # Band 5: up to 25,000,000 @ 23%
-        band5_width = Decimal('25000000')
-        if rem <= band5_width:
-            tax += rem * Decimal('0.23')
-            return quantize_currency(tax)
-        tax += band5_width * Decimal('0.23')
-        rem -= band5_width
-
-        # Band 6: Above 50m @ 25%
-        tax += rem * Decimal('0.25')
-        return quantize_currency(tax)
+    @classmethod
+    def calculate_nta2025_tax(cls, annual_chargeable_income: Decimal) -> Decimal:
+        tax, _ = cls.calculate_nta2025_tax_bands(annual_chargeable_income)
+        return tax
 
     @classmethod
     def calculate_employee_payroll(
@@ -413,7 +414,7 @@ class PayrollCalculator:
         annual_reliefs = quantize_currency((pension_emp + nhf) * Decimal('12') + rent_relief)
         chargeable_income = max(Decimal('0.00'), annual_gross - annual_reliefs)
 
-        annual_paye = cls.calculate_nta2025_tax(chargeable_income)
+        annual_paye, tax_bands_breakdown = cls.calculate_nta2025_tax_bands(chargeable_income)
         monthly_paye = quantize_currency(annual_paye / Decimal('12'))
 
         # 4. Loan recovery
@@ -460,5 +461,8 @@ class PayrollCalculator:
             loan_deduction=loan_deduction,
             other_deductions=other_ded,
             net_pay=quantize_currency(net_pay),
-            is_negative_blocked=is_negative_blocked
+            is_negative_blocked=is_negative_blocked,
+            nhf_base=basic,
+            taxable_gross=gross_pay,
+            tax_bands=tax_bands_breakdown
         )
