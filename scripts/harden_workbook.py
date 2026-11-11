@@ -3,9 +3,11 @@ Hardens and updates the Comprehensive Factory Payroll System Excel workbook
 according to Phase 0 and Phase 1 specifications.
 """
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
+
+WORKBOOK_PASSWORD = 'FactoryPayrollSecure2026!'
 
 def harden_workbook(filename, output_filenames):
     wb = openpyxl.load_workbook(filename)
@@ -332,6 +334,83 @@ def harden_workbook(filename, output_filenames):
                 if len(val_str) > max_len:
                     max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    # ========================================================
+    # FR-SEC-05: Excel Hardening - Sheet Protection & Data Validations
+    # - Formula cells and reference sheets shall be locked/protected
+    # - User inputs restricted via data validation
+    # ========================================================
+
+    # 1. Data Validations
+    # Employee_Master validations
+    dv_status = DataValidation(type="list", formula1='"Active,On Leave,Suspended,Terminated"', allow_blank=True)
+    ws_emp.add_data_validation(dv_status)
+    dv_status.add("AF2:AF100")
+
+    dv_emp_type = DataValidation(type="list", formula1='"Permanent,Contract,Casual"', allow_blank=True)
+    ws_emp.add_data_validation(dv_emp_type)
+    dv_emp_type.add("F2:F100")
+
+    dv_pay_freq = DataValidation(type="list", formula1='"Monthly,Weekly,Bi-Weekly"', allow_blank=True)
+    ws_emp.add_data_validation(dv_pay_freq)
+    dv_pay_freq.add("G2:G100")
+
+    dv_nhf_enroll = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws_emp.add_data_validation(dv_nhf_enroll)
+    dv_nhf_enroll.add("Q2:Q100")
+
+    # Shift_Setup validations on Attendance
+    dv_shift = DataValidation(type="list", formula1='"Day,Night,Weekend,Holiday"', allow_blank=True)
+    ws_att.add_data_validation(dv_shift)
+    dv_shift.add("C2:C1000")
+
+    dv_absent = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws_att.add_data_validation(dv_absent)
+    dv_absent.add("J2:J1000")
+
+    # Leave_Register validations
+    dv_leave_type = DataValidation(type="list", formula1='"Annual,Sick,Maternity,Paternity,Compassionate,Study,Unpaid"', allow_blank=True)
+    ws_lv.add_data_validation(dv_leave_type)
+    dv_leave_type.add("C2:C500")
+
+    # 2. Formula Locking & Sheet Protection (FR-SEC-05)
+    # Unlock input cells while keeping formula cells locked
+    unlocked_protection = Protection(locked=False)
+    locked_protection = Protection(locked=True)
+
+    # In Employee_Master, data input cells are unlocked
+    for row in ws_emp.iter_rows(min_row=2, max_row=100, min_col=1, max_col=len(emp_headers)):
+        for cell in row:
+            cell.protection = unlocked_protection
+
+    # In Attendance, input columns A to E and J are unlocked
+    for row in ws_att.iter_rows(min_row=2, max_row=1000, min_col=1, max_col=11):
+        for col_idx, cell in enumerate(row, start=1):
+            if col_idx in [1, 2, 3, 4, 5, 10]:  # Date, EmpID, Shift, ClockIn, ClockOut, Absent
+                cell.protection = unlocked_protection
+            else:
+                cell.protection = locked_protection
+
+    # In Payroll_Register, formulas are in G, J, K, M, N, Q, S, T, U, V, W, X, AA
+    formula_cols_reg = [7, 10, 11, 13, 14, 17, 19, 20, 21, 22, 23, 24, 27]
+    for row in ws_reg.iter_rows(min_row=2, max_row=ws_reg.max_row, min_col=1, max_col=len(reg_headers)):
+        for col_idx, cell in enumerate(row, start=1):
+            if col_idx in formula_cols_reg:
+                cell.protection = locked_protection
+            else:
+                cell.protection = unlocked_protection
+
+    # Reference sheets: PAYE_Bands, Shift_Setup, Instructions, Dashboard are fully locked
+    for sheetname in ['PAYE_Bands', 'Shift_Setup', 'Instructions', 'Dashboard', 'Audit_Log', 'Payroll_Register']:
+        wb[sheetname].protection.set_password(WORKBOOK_PASSWORD)
+        wb[sheetname].protection.sheet = True
+        wb[sheetname].protection.enable()
+
+    # Protect remaining sheets to enforce unlocked cell editing only
+    for sheetname in ['Employee_Master', 'Attendance', 'Loans', 'Leave_Register', 'Bonus_Register', 'Payroll_Input', 'Payslip_Template', 'Bank_Transfer']:
+        wb[sheetname].protection.set_password(WORKBOOK_PASSWORD)
+        wb[sheetname].protection.sheet = True
+        wb[sheetname].protection.enable()
 
     # Save to all requested output filenames
     for out_f in output_filenames:
