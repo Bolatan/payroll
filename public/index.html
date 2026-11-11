@@ -47,6 +47,10 @@ td.num,th.num{text-align:right}
 .flag{color:var(--danger);font-weight:500}
 dialog{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);max-width:520px;width:92%}
 dialog table td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.draft-watermark{position:relative}
+.draft-watermark::before{content:"DRAFT";position:absolute;top:30%;left:50%;transform:translate(-50%,-50%) rotate(-25deg);font-size:5rem;font-weight:900;color:rgba(180,0,0,0.12);pointer-events:none;z-index:10;letter-spacing:10px}
+tr.subtotal{background:rgba(0,0,0,0.04);font-weight:600}
+tr.grandtotal{background:rgba(29,107,82,0.12);font-weight:bold;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
 @media (max-width:860px){#app{grid-template-columns:1fr}nav{flex-direction:row;flex-wrap:wrap;padding:.6rem}nav strong,nav .who{display:none}}
 @media print{nav,.noprint{display:none!important}#app{display:block}dialog{border:0}}
 </style>
@@ -600,16 +604,39 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   const isLocked = run && ['Approved', 'Paid/Locked'].includes(run.status);
   const statusDisplay = run?.status || 'Open (Not Run)';
 
+  let reg = null;
+  const deptFilter = $('#regDeptFilter')?.value || '';
+  const searchFilter = $('#regSearch')?.value || '';
+  const sortBy = $('#regSortBy')?.value || 'empId';
+  const sortDir = $('#regSortDir')?.value || 'asc';
+
+  if (run) {
+    try {
+      const qParams = new URLSearchParams();
+      if (deptFilter) qParams.set('department', deptFilter);
+      if (searchFilter) qParams.set('search', searchFilter);
+      if (sortBy) qParams.set('sortBy', sortBy);
+      if (sortDir) qParams.set('sortDir', sortDir);
+      reg = await api(`/api/payroll/${period}/register?${qParams.toString()}`);
+    } catch (e) { /* ignore */ }
+  }
+
+  const deptList = [...new Set((run?.lines || []).map((l) => l.department || 'General'))].sort();
+
   $('#view').innerHTML = `<h2>Payroll (${esc(period)})</h2>
   <div class="bar noprint"><label>Period<input id="period" type="month" value="${period}"></label>
     ${can(['payroll']) && !isLocked ? '<button id="prepInputs">Prepare Inputs</button>' : ''}
     ${can(['payroll']) && !isLocked ? '<button id="calc" class="primary">Calculate payroll</button>' : ''}
     ${can(['approver', 'executive']) && !isLocked ? '<button id="appr" class="primary">Approve and lock</button>' : ''}
+    ${run ? '<button id="dlRegCsv">Export Register CSV</button>' : ''}
+    ${run ? '<button id="dlRegXlsx">Export Register XLSX</button>' : ''}
+    ${run ? '<button id="dlRegPdf">Export Register PDF</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="bank">Download bank file</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="postGL" class="primary">Post GL Journal</button>' : ''}
     ${run && isLocked && can(['payroll', 'approver']) ? '<button id="initiateBank">Direct Bank Transfer</button>' : ''}</div>
   <div class="msg ${isLocked ? '' : (run ? 'warn' : '')}">
     <b>State:</b> ${esc(statusDisplay)}${run?.preparedBy ? ` | Prepared by ${esc(run.preparedBy)}` : ''}${run?.approvedBy ? ` | Approved by ${esc(run.approvedBy)}` : ''}
+    ${run?.versionStamp ? `<br><b>Version Stamp:</b> <code>${esc(run.versionStamp)}</code> (Approved: ${new Date(run.approvedAt).toLocaleString('en-NG')})` : ''}
     ${run?.glPosted ? `<br><b>GL Journal Posted:</b> ${esc(run.glJournalId)}` : ''}
     ${run?.bankPaymentInitiated ? `<br><b>Bank Payment Dispatched:</b> ${esc(run.paymentReference)}` : ''}
   </div>
@@ -624,8 +651,71 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
   ` : ''}
   ${run && t ? `
   <div class="stats">${[['Employees', t.employees], ['Gross pay', money(t.gross)], ['PAYE', money(t.paye)], ['Pension (employee)', money(t.pension)], ['Employer Pension', money(t.employerPension)], ['Net pay', money(t.net)]].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('')}</div>
-  <div class="card scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Country</th><th>Dept</th><th class="num">Basic</th><th class="num">OT pay</th><th class="num">Bonus</th><th class="num">Gross</th><th class="num">Pension</th><th class="num">NHF</th><th class="num">PAYE</th><th class="num">Loan</th><th class="num">Other</th><th class="num">Net</th><th></th></tr></thead><tbody>` +
-    (run.lines || []).map((l) => `<tr><td>${esc(l.empId)}</td><td>${esc(l.name)}</td><td>${esc(l.country || 'NG')}</td><td>${esc(l.department)}</td>${['basic', 'otPay', 'bonuses', 'gross', 'pension', 'nhf', 'paye', 'loanDeduction', 'otherDeductions', 'netPay'].map((k) => `<td class="num">${money(l[k])}</td>`).join('')}<td>${l.flags.length ? `<span class="flag">${l.flags.join(', ')}</span> ` : ''}<button data-slip="${esc(l.empId)}">Payslip</button></td></tr>`).join('') + '</tbody></table></div>'
+
+  <div class="card ${reg?.watermark ? 'draft-watermark' : ''}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem;flex-wrap:wrap;gap:0.5rem">
+      <h3 style="margin:0">Payroll Register Output (FR-REG-01 to FR-REG-04)</h3>
+      ${reg?.watermark ? `<span class="flag" style="font-size:1.1rem;font-weight:bold;border:2px dashed var(--danger);padding:0.2rem 0.6rem;border-radius:4px">WATERMARK: ${esc(reg.watermark)}</span>` : '<span style="color:var(--accent);font-weight:bold;border:2px solid var(--accent);padding:0.2rem 0.6rem;border-radius:4px">FINAL / APPROVED</span>'}
+    </div>
+
+    <div class="bar noprint" style="margin-bottom:0.8rem">
+      <label>Department<select id="regDeptFilter"><option value="">All Departments</option>${deptList.map((d) => `<option value="${esc(d)}" ${d === deptFilter ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select></label>
+      <label>Search<input id="regSearch" placeholder="EmpID, Name..." value="${esc(searchFilter)}"></label>
+      <label>Sort By<select id="regSortBy">
+        <option value="empId" ${sortBy === 'empId' ? 'selected' : ''}>EmpID</option>
+        <option value="name" ${sortBy === 'name' ? 'selected' : ''}>Name</option>
+        <option value="department" ${sortBy === 'department' ? 'selected' : ''}>Department</option>
+        <option value="grossPay" ${sortBy === 'grossPay' ? 'selected' : ''}>Gross Pay</option>
+        <option value="netPay" ${sortBy === 'netPay' ? 'selected' : ''}>Net Pay</option>
+      </select></label>
+      <label>Sort Order<select id="regSortDir">
+        <option value="asc" ${sortDir === 'asc' ? 'selected' : ''}>Ascending</option>
+        <option value="desc" ${sortDir === 'desc' ? 'selected' : ''}>Descending</option>
+      </select></label>
+      <button id="applyFilters">Apply</button>
+      <button id="resetFilters">Reset</button>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Period</th><th>EmpID</th><th>Name</th><th>Department</th>
+            <th class="num">Basic</th><th class="num">OT Pay</th><th class="num">Allowances</th><th class="num">Bonuses</th>
+            <th class="num">Gross Pay</th><th class="num">Pension</th><th class="num">NHF</th><th class="num">Taxable Pay</th>
+            <th class="num">PAYE</th><th class="num">Loan Ded.</th><th class="num">Other Ded.</th><th class="num">Net Pay</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${(reg?.departmentSubtotals || []).map((sub) => {
+            const dItems = (reg.items || []).filter((it) => it.department === sub.department);
+            return dItems.map((l) => `<tr>
+              <td>${esc(l.period)}</td><td><b>${esc(l.empId)}</b></td><td>${esc(l.name)}</td><td>${esc(l.department)}</td>
+              <td class="num">${money(l.basic)}</td><td class="num">${money(l.otPay)}</td><td class="num">${money(l.allowances)}</td><td class="num">${money(l.bonuses)}</td>
+              <td class="num"><b>${money(l.grossPay)}</b></td><td class="num">${money(l.pension)}</td><td class="num">${money(l.nhf)}</td><td class="num">${money(l.taxablePay)}</td>
+              <td class="num">${money(l.paye)}</td><td class="num">${money(l.loanDeduction)}</td><td class="num">${money(l.otherDeductions)}</td><td class="num"><b>${money(l.netPay)}</b></td>
+              <td><button data-slip="${esc(l.empId)}">Payslip</button></td>
+            </tr>`).join('') +
+            `<tr class="subtotal">
+              <td colspan="4"><b>Subtotal (${esc(sub.department)}) - ${sub.count} employees</b></td>
+              <td class="num">${money(sub.basic)}</td><td class="num">${money(sub.otPay)}</td><td class="num">${money(sub.allowances)}</td><td class="num">${money(sub.bonuses)}</td>
+              <td class="num">${money(sub.grossPay)}</td><td class="num">${money(sub.pension)}</td><td class="num">${money(sub.nhf)}</td><td class="num">${money(sub.taxablePay)}</td>
+              <td class="num">${money(sub.paye)}</td><td class="num">${money(sub.loanDeduction)}</td><td class="num">${money(sub.otherDeductions)}</td><td class="num">${money(sub.netPay)}</td>
+              <td></td>
+            </tr>`;
+          }).join('')}
+          ${reg?.grandTotal ? `<tr class="grandtotal">
+            <td colspan="4"><b>GRAND TOTAL (${reg.grandTotal.count} employees)</b></td>
+            <td class="num">${money(reg.grandTotal.basic)}</td><td class="num">${money(reg.grandTotal.otPay)}</td><td class="num">${money(reg.grandTotal.allowances)}</td><td class="num">${money(reg.grandTotal.bonuses)}</td>
+            <td class="num"><b>${money(reg.grandTotal.grossPay)}</b></td><td class="num">${money(reg.grandTotal.pension)}</td><td class="num">${money(reg.grandTotal.nhf)}</td><td class="num">${money(reg.grandTotal.taxablePay)}</td>
+            <td class="num">${money(reg.grandTotal.paye)}</td><td class="num">${money(reg.grandTotal.loanDeduction)}</td><td class="num">${money(reg.grandTotal.otherDeductions)}</td><td class="num"><b>${money(reg.grandTotal.netPay)}</b></td>
+            <td></td>
+          </tr>` : ''}
+        </tbody>
+      </table>
+    </div>
+  </div>`
     : `<p style="color:var(--muted)">No payroll calculated for ${period} yet. Choose "Prepare Inputs" to assemble inputs, or "Calculate payroll" to run gross-to-net.</p>`}`;
 
   $('#period').onchange = () => payrollView($('#period').value);
@@ -645,6 +735,26 @@ async function payrollView(period = $('#period')?.value || new Date().toISOStrin
       say(esc(e.message) + detail, 'err');
     }
   });
+  $('#applyFilters') && ($('#applyFilters').onclick = () => payrollView($('#period').value));
+  $('#resetFilters') && ($('#resetFilters').onclick = () => {
+    if ($('#regDeptFilter')) $('#regDeptFilter').value = '';
+    if ($('#regSearch')) $('#regSearch').value = '';
+    if ($('#regSortBy')) $('#regSortBy').value = 'empId';
+    if ($('#regSortDir')) $('#regSortDir').value = 'asc';
+    payrollView($('#period').value);
+  });
+  const dlReg = async (url, fn) => {
+    try {
+      const r = await api(url, { raw: true });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(await r.blob());
+      a.download = fn;
+      a.click();
+    } catch (e) { say(esc(e.message), 'err'); }
+  };
+  $('#dlRegCsv') && ($('#dlRegCsv').onclick = () => dlReg(`/api/payroll/${period}/register.csv`, `payroll-register-${period}.csv`));
+  $('#dlRegXlsx') && ($('#dlRegXlsx').onclick = () => dlReg(`/api/payroll/${period}/register.xlsx`, `payroll-register-${period}.xlsx`));
+  $('#dlRegPdf') && ($('#dlRegPdf').onclick = () => dlReg(`/api/payroll/${period}/register.pdf`, `payroll-register-${period}.pdf`));
   $('#bank') && ($('#bank').onclick = async () => {
     try { const r = await api(`/api/payroll/${period}/bank.csv`, { raw: true }); const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `bank-${period}.csv`; a.click(); } catch (e) { say(esc(e.message), 'err'); }
   });
