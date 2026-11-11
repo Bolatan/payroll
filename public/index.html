@@ -186,6 +186,7 @@ function renderNav() {
       ...(me.empId ? ['My Payslips'] : []),
       ...(can(['executive', 'approver']) ? ['Executive'] : []),
       ...(can(['tax_advisor', 'approver', 'payroll', 'executive']) ? ['Remittances'] : []),
+      ...(can(['payroll', 'approver', 'executive', 'auditor', 'tax_advisor', 'hr']) ? ['Reports'] : []),
       ...Object.keys(SCREENS).filter((k) => can(SCREENS[k].roles)),
       ...(me.role === 'admin' ? ['Users'] : []),
       'Account'
@@ -299,6 +300,7 @@ async function show() {
   if (tab === 'My Payslips') return myPayslipsView();
   if (tab === 'Executive') return executiveView();
   if (tab === 'Remittances') return remittancesView();
+  if (tab === 'Reports') return reportsView();
   if (tab === 'Audit') return auditView();
   const s = SCREENS[tab];
   let rows = [];
@@ -596,41 +598,237 @@ async function myPayslipsView() {
   };
 }
 
-// ---- Executive Dashboard for MD / CFO ----
+// ---- Executive Dashboard for MD / CFO (FR-DSH-01 to FR-DSH-04) ----
 async function executiveView(period = $('#execPeriod')?.value || new Date().toISOString().slice(0, 7)) {
   let data = null;
   try { data = await api(`/api/dashboard/${period}`); } catch (e) { return say(esc(e.message), 'err'); }
   const k = data.kpis;
+  const t = data.trends;
+  const recon = data.reconciliation;
+  const deptList = Array.isArray(data.departmentBreakdown) ? data.departmentBreakdown : [];
+
+  const trendRow = (label, tr, isMoney = true) => {
+    if (!tr) return '';
+    const prefix = isMoney ? '₦' : '';
+    const fmtVal = (v) => isMoney ? money(v) : v;
+    const sign = tr.delta > 0 ? '+' : '';
+    const color = tr.delta > 0 ? 'var(--warn)' : tr.delta < 0 ? 'var(--accent)' : 'inherit';
+    return `<tr>
+      <td><b>${esc(label)}</b></td>
+      <td class="num">${prefix}${fmtVal(tr.current)}</td>
+      <td class="num" style="color:var(--muted)">${prefix}${fmtVal(tr.previous)}</td>
+      <td class="num" style="color:${color}">${sign}${prefix}${fmtVal(tr.delta)}</td>
+      <td class="num" style="color:${color};font-weight:600">${sign}${tr.pctChange}%</td>
+    </tr>`;
+  };
+
   $('#view').innerHTML = `<h2>Executive Dashboard</h2>
-  <div class="bar noprint"><label>Period<input id="execPeriod" type="month" value="${period}"></label></div>
-  ${k ? `<div class="msg ${data.status === 'Approved' ? '' : 'warn'}">Status: <b>${esc(data.status)}</b> (Prepared: ${esc(data.preparedBy || 'N/A')}${data.approvedBy ? `, Approved: ${esc(data.approvedBy)}` : ''})</div>
+  <div class="bar noprint">
+    <label>Period<input id="execPeriod" type="month" value="${period}"></label>
+    <button id="goToReportsBtn">View Standard Reports</button>
+  </div>
+  ${k ? `
+  <div class="msg ${data.status === 'Approved' ? '' : 'warn'}">Status: <b>${esc(data.status)}</b> (Prepared: ${esc(data.preparedBy || 'N/A')}${data.approvedBy ? `, Approved: ${esc(data.approvedBy)}` : ''})</div>
+
+  ${recon ? `
+    <div class="msg ${recon.reconciled ? '' : 'err'}" style="display:flex;align-items:center;justify-content:space-between">
+      <span><b>Register Reconciliation (FR-DSH-04):</b> ${recon.reconciled ? '<span style="color:var(--accent);font-weight:bold">✓ Exact reconciliation: zero discrepancy against payroll register</span>' : `<span style="color:var(--danger);font-weight:bold">⚠ ${recon.discrepancyCount} discrepancy detected</span>`}</span>
+      <span style="font-size:.85rem;color:var(--muted)">Formula/query-driven</span>
+    </div>
+  ` : ''}
+
+  <!-- Core KPIs (FR-DSH-01) -->
+  <h3 style="margin:1rem 0 .4rem 0">Core Payroll KPIs</h3>
   <div class="stats">
-    <div><b>${k.headcount}</b><span>Paid Employees</span></div>
+    <div><b>${k.paidHeadcount ?? k.headcount}</b><span>Paid Headcount</span></div>
     <div><b>₦${money(k.grossPayroll)}</b><span>Total Gross Payroll</span></div>
-    <div><b>₦${money(k.netPayroll)}</b><span>Total Net Payroll</span></div>
-    <div><b>₦${money(k.otCost)}</b><span>Overtime Cost (${k.otHours} h)</span></div>
-    <div><b>₦${money(k.employerCost)}</b><span>Total Employer Cost</span></div>
     <div><b>₦${money(k.totalPAYE)}</b><span>Total PAYE Tax</span></div>
     <div><b>₦${money(k.pensionTotal)}</b><span>Total Pension (18%)</span></div>
+    <div><b>₦${money(k.netPayroll)}</b><span>Total Net Payroll</span></div>
+    <div><b>₦${money(k.pensionEmployee)}</b><span>Employee Pension (8%)</span></div>
+    <div><b>₦${money(k.pensionEmployer)}</b><span>Employer Pension (10%)</span></div>
+  </div>
+
+  <!-- Extended KPIs (FR-DSH-02) -->
+  <h3 style="margin:1rem 0 .4rem 0">Extended Operational KPIs</h3>
+  <div class="stats">
     <div><b>₦${money(k.totalNHF)}</b><span>Total NHF (2.5%)</span></div>
+    <div><b>₦${money(k.loanRecoveries)}</b><span>Total Loan Recoveries</span></div>
+    <div><b>₦${money(k.otCost)}</b><span>Overtime Cost (${k.otHours} h)</span></div>
+    <div><b>₦${money(k.bonuses)}</b><span>Total Bonuses</span></div>
+    <div><b>₦${money(k.employerCost)}</b><span>Total Employer Cost</span></div>
+    <div><b>₦${money(k.statutoryLevies?.total ?? ((k.grossPayroll || 0) * 0.02))}</b><span>Statutory Levies (ITF + NSITF)</span></div>
   </div>
+
+  <!-- Period-over-Period Trend Analysis (FR-DSH-03) -->
+  ${t ? `
   <div class="card">
-    <h3 style="margin-top:0">Department Cost Breakdown</h3>
-    <div class="scroll"><table><thead><tr><th>Department</th><th class="num">Staff Count</th><th class="num">Gross Pay</th><th class="num">Overtime Pay</th><th class="num">Net Pay</th><th class="num">Total Employer Cost</th></tr></thead><tbody>` +
-    data.departmentBreakdown.map((d) => `<tr><td><b>${esc(d.department)}</b></td><td class="num">${d.count}</td><td class="num">${money(d.gross)}</td><td class="num">${money(d.otPay)}</td><td class="num">${money(d.netPay)}</td><td class="num"><b>${money(d.employerCost)}</b></td></tr>`).join('') +
-    `</tbody></table></div>
+    <h3 style="margin-top:0">Period-over-Period Trend Analysis</h3>
+    <p style="font-size:.85rem;color:var(--muted)">Comparing current period <b>${esc(t.currentPeriod || period)}</b> with prior period <b>${esc(t.previousPeriod || 'N/A')}</b>.</p>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>KPI / Metric</th>
+            <th class="num">Current Period</th>
+            <th class="num">Previous Period</th>
+            <th class="num">Variance (Delta)</th>
+            <th class="num">% Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${trendRow('Gross Payroll', t.gross)}
+          ${trendRow('Net Payroll', t.net)}
+          ${trendRow('Overtime Pay', t.overtimeCost)}
+          ${trendRow('Overtime Hours', t.overtimeHours, false)}
+          ${trendRow('PAYE Tax', t.paye)}
+          ${trendRow('Paid Headcount', t.headcount, false)}
+          ${trendRow('Total Employer Cost', t.employerCost)}
+        </tbody>
+      </table>
+    </div>
   </div>
+  ` : ''}
+
+  <!-- Department Cost Breakdown (FR-DSH-02, FR-DSH-03) -->
+  <div class="card">
+    <h3 style="margin-top:0">Department Cost Breakdown & Headcount</h3>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Department</th>
+            <th class="num">Headcount</th>
+            <th class="num">Gross Pay</th>
+            <th class="num">Overtime Pay</th>
+            <th class="num">Net Pay</th>
+            <th class="num">Total Employer Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${deptList.map((d) => `<tr>
+            <td><b>${esc(d.department)}</b></td>
+            <td class="num">${d.count}</td>
+            <td class="num">${money(d.gross)}</td>
+            <td class="num">${money(d.otPay)}</td>
+            <td class="num">${money(d.netPay)}</td>
+            <td class="num"><b>${money(d.employerCost)}</b></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Governance & Exceptions -->
   <div class="card">
     <h3 style="margin-top:0">Governance & Exceptions</h3>
-    <p>High-Value Payees (≥ ₦1,000,000 net): <b>${data.governance.highValueCount}</b> | Flagged lines: <b>${data.governance.exceptionCount}</b></p>
-    ${data.governance.highValueEmployees.length ? `<div class="scroll" style="margin-bottom:.6rem"><table><thead><tr><th>ID</th><th>Name</th><th>Department</th><th class="num">Gross</th><th class="num">Net Pay</th></tr></thead><tbody>` +
+    <p>High-Value Payees (≥ ₦1,000,000 net): <b>${data.governance?.highValueCount ?? 0}</b> | Flagged lines: <b>${data.governance?.exceptionCount ?? 0}</b></p>
+    ${data.governance?.highValueEmployees?.length ? `<div class="scroll" style="margin-bottom:.6rem"><table><thead><tr><th>ID</th><th>Name</th><th>Department</th><th class="num">Gross</th><th class="num">Net Pay</th></tr></thead><tbody>` +
       data.governance.highValueEmployees.map((h) => `<tr><td>${esc(h.empId)}</td><td>${esc(h.name)}</td><td>${esc(h.department)}</td><td class="num">${money(h.gross)}</td><td class="num"><b>${money(h.netPay)}</b></td></tr>`).join('') + `</tbody></table></div>` : ''}
-    ${data.governance.flaggedEmployees.length ? `<div class="scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Flags</th><th class="num">Net Pay</th></tr></thead><tbody>` +
-      data.governance.flaggedEmployees.map((f) => `<tr><td>${esc(f.empId)}</td><td>${esc(f.name)}</td><td><span class="flag">${f.flags.join(', ')}</span></td><td class="num">${money(f.netPay)}</td></tr>`).join('') + `</tbody></table></div>` : ''}
-    ${data.governance.warnings.length ? `<div style="margin-top:.6rem">${data.governance.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}</div>` : ''}
+    ${data.governance?.flaggedEmployees?.length ? `<div class="scroll"><table><thead><tr><th>ID</th><th>Name</th><th>Flags</th><th class="num">Net Pay</th></tr></thead><tbody>` +
+      data.governance.flaggedEmployees.map((f) => `<tr><td>${esc(f.empId)}</td><td>${esc(f.name)}</td><td><span class="flag">${(f.flags || []).join(', ')}</span></td><td class="num">${money(f.netPay)}</td></tr>`).join('') + `</tbody></table></div>` : ''}
+    ${data.governance?.warnings?.length ? `<div style="margin-top:.6rem">${data.governance.warnings.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}</div>` : ''}
   </div>` : `<p style="color:var(--muted)">No payroll data available for ${period}.</p>`}`;
 
   $('#execPeriod').onchange = () => executiveView($('#execPeriod').value);
+  if ($('#goToReportsBtn')) {
+    $('#goToReportsBtn').onclick = () => { tab = 'Reports'; show(); };
+  }
+}
+
+// ---- Standard Reports View (FR-DSH-05, FR-DSH-06) ----
+async function reportsView(period = $('#repPeriod')?.value || new Date().toISOString().slice(0, 7), reportId = $('#repSelect')?.value || 'payroll-register') {
+  let repList = [];
+  try {
+    const res = await api('/api/reports');
+    repList = Array.isArray(res) ? res : [];
+  } catch (e) { return say(esc(e.message), 'err'); }
+
+  let report = null;
+  try {
+    report = await api(`/api/reports/${reportId}?period=${period}`);
+  } catch (e) {
+    say(esc(e.message), 'warn');
+  }
+
+  const rows = report && Array.isArray(report.rows) ? report.rows : [];
+  const headers = report && Array.isArray(report.headers) ? report.headers : [];
+  const columns = report && Array.isArray(report.columns) ? report.columns : headers;
+
+  $('#view').innerHTML = `<h2>Standard Reports (FR-DSH-05, FR-DSH-06)</h2>
+  <div class="msg">14 Standard Operational, Statutory, and Financial reports with multi-format export to CSV, XLSX, and PDF.</div>
+  <div class="bar noprint">
+    <label>Period<input id="repPeriod" type="month" value="${period}"></label>
+    <label style="width:260px">Report Type<select id="repSelect">
+      ${repList.map((r) => `<option value="${esc(r.id)}" ${r.id === reportId ? 'selected' : ''}>${esc(r.name)} (${esc(r.category)})</option>`).join('')}
+    </select></label>
+    <button id="dlRepCsv">Download CSV</button>
+    <button id="dlRepXlsx">Download XLSX</button>
+    <button id="dlRepPdf" class="primary">Download PDF</button>
+  </div>
+
+  ${report ? `
+  <div class="card scroll">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem;flex-wrap:wrap;gap:.5rem">
+      <div>
+        <h3 style="margin:0">${esc(report.name || report.id)}</h3>
+        <span style="font-size:.85rem;color:var(--muted)">Period: <b>${esc(report.period)}</b> | Total records: <b>${rows.length}</b></span>
+      </div>
+      <div>
+        <span style="font-size:.82rem;color:var(--muted)">Category: <b>${esc(report.category || 'Standard')}</b></span>
+      </div>
+    </div>
+
+    ${rows.length ? `
+    <table>
+      <thead>
+        <tr>
+          ${headers.map((h) => `<th>${esc(h)}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `<tr>
+          ${columns.map((c) => {
+            const val = Array.isArray(row) ? row[headers.indexOf(c)] : row[c];
+            const isNum = typeof val === 'number';
+            return `<td class="${isNum ? 'num' : ''}">${isNum ? (/Hours|Days|count/i.test(c) ? val : money(val)) : esc(val == null ? '' : val)}</td>`;
+          }).join('')}
+        </tr>`).join('')}
+        ${report.summaryLine ? `
+          <tr class="grandtotal">
+            ${report.summaryLine.map((val, idx) => {
+              const isNum = typeof val === 'number';
+              const colName = columns[idx] || '';
+              return `<td class="${isNum ? 'num' : ''}">${isNum ? (/Hours|Days|count/i.test(colName) ? val : money(val)) : esc(val == null ? '' : val)}</td>`;
+            }).join('')}
+          </tr>
+        ` : ''}
+      </tbody>
+    </table>
+    ` : `<p style="color:var(--muted)">No records found for ${esc(report.name || report.id)} in period ${period}.</p>`}
+  </div>
+  ` : `<div class="msg warn">Unable to load report. Check period or run calculation first.</div>`}
+  `;
+
+  $('#repPeriod').onchange = () => reportsView($('#repPeriod').value, $('#repSelect').value);
+  $('#repSelect').onchange = () => reportsView($('#repPeriod').value, $('#repSelect').value);
+
+  const dl = async (fmt) => {
+    try {
+      const curPeriod = $('#repPeriod').value;
+      const curReport = $('#repSelect').value;
+      const r = await api(`/api/reports/${curReport}?period=${curPeriod}&format=${fmt}`, { raw: true });
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${curReport}-${curPeriod}.${fmt}`;
+      a.click();
+    } catch (err) { say(esc(err.message), 'err'); }
+  };
+
+  $('#dlRepCsv') && ($('#dlRepCsv').onclick = () => dl('csv'));
+  $('#dlRepXlsx') && ($('#dlRepXlsx').onclick = () => dl('xlsx'));
+  $('#dlRepPdf') && ($('#dlRepPdf').onclick = () => dl('pdf'));
 }
 
 // ---- Remittances View for Tax Advisor & Statutory Bodies ----
