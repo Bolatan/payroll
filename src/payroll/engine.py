@@ -194,19 +194,21 @@ class PayrollResult:
     bonuses: Decimal
     gross_pay: Decimal
     pensionable_emoluments: Decimal
-    pension_employee: Decimal
-    pension_employer: Decimal
-    nhf: Decimal
-    annual_rent: Decimal
-    rent_relief: Decimal
-    annual_gross: Decimal
-    annual_reliefs: Decimal
-    annual_chargeable_income: Decimal
-    annual_paye: Decimal
-    monthly_paye: Decimal
-    loan_deduction: Decimal
-    other_deductions: Decimal
-    net_pay: Decimal
+    nhf_base: Decimal = Decimal('0.00')
+    taxable_gross: Decimal = Decimal('0.00')
+    pension_employee: Decimal = Decimal('0.00')
+    pension_employer: Decimal = Decimal('0.00')
+    nhf: Decimal = Decimal('0.00')
+    annual_rent: Decimal = Decimal('0.00')
+    rent_relief: Decimal = Decimal('0.00')
+    annual_gross: Decimal = Decimal('0.00')
+    annual_reliefs: Decimal = Decimal('0.00')
+    annual_chargeable_income: Decimal = Decimal('0.00')
+    annual_paye: Decimal = Decimal('0.00')
+    monthly_paye: Decimal = Decimal('0.00')
+    loan_deduction: Decimal = Decimal('0.00')
+    other_deductions: Decimal = Decimal('0.00')
+    net_pay: Decimal = Decimal('0.00')
     is_negative_blocked: bool = False
 
 class PayrollCalculator:
@@ -447,6 +449,8 @@ class PayrollCalculator:
             bonuses=bonuses_val,
             gross_pay=gross_pay,
             pensionable_emoluments=pensionable_emoluments,
+            nhf_base=basic,
+            taxable_gross=gross_pay,
             pension_employee=pension_emp,
             pension_employer=pension_empr,
             nhf=nhf,
