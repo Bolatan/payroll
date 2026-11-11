@@ -3,7 +3,7 @@ Hardens and updates the Comprehensive Factory Payroll System Excel workbook
 according to Phase 0 and Phase 1 specifications.
 """
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, Protection
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 
@@ -332,6 +332,46 @@ def harden_workbook(filename, output_filenames):
                 if len(val_str) > max_len:
                     max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    # FR-SEC-05: Excel Hardening, Sheet Protection, Locked Formulas, and Data Validations
+    # 1. Add Data Validations
+    ws_emp = wb['Employee_Master']
+    dv_status = DataValidation(type="list", formula1='"Active,On Leave,Suspended,Terminated"', allow_blank=True)
+    ws_emp.add_data_validation(dv_status)
+    dv_status.add("AF2:AF100") # Status column
+
+    dv_emp_type = DataValidation(type="list", formula1='"Permanent,Contract,Casual"', allow_blank=True)
+    ws_emp.add_data_validation(dv_emp_type)
+    dv_emp_type.add("F2:F100") # EmploymentType column
+
+    dv_nhf = DataValidation(type="list", formula1='"Yes,No"', allow_blank=True)
+    ws_emp.add_data_validation(dv_nhf)
+    dv_nhf.add("Q2:Q100") # NHF_Enrolled column
+
+    ws_att = wb['Attendance']
+    dv_shift = DataValidation(type="list", formula1='"Day,Night,Weekend,Holiday"', allow_blank=True)
+    ws_att.add_data_validation(dv_shift)
+    dv_shift.add("C2:C500") # Shift column
+
+    # 2. Lock formulas and protect reference/calculation sheets
+    reference_sheets = ['PAYE_Bands', 'Shift_Setup', 'Instructions', 'Dashboard', 'Audit_Log']
+    for sheetname in wb.sheetnames:
+        ws = wb[sheetname]
+        is_ref_sheet = sheetname in reference_sheets
+
+        for row in ws.iter_rows():
+            for cell in row:
+                val = str(cell.value or '')
+                is_formula = val.startswith('=')
+                # If it's a reference sheet, lock all cells; if transactional, lock formula cells and headers
+                if is_ref_sheet or is_formula or cell.row == 1:
+                    cell.protection = Protection(locked=True)
+                else:
+                    cell.protection = Protection(locked=False)
+
+        # Enable sheet protection with password
+        ws.protection.sheet = True
+        ws.protection.password = 'FactoryPayroll2026'
 
     # Save to all requested output filenames
     for out_f in output_filenames:
